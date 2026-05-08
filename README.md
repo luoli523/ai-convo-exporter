@@ -1,5 +1,7 @@
 # ai-convo-exporter
 
+English | [简体中文](README.zh-CN.md)
+
 Export Codex and Claude Code conversations into an Obsidian vault, grouped by project.
 
 The exporter keeps two copies of each conversation:
