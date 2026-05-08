@@ -188,12 +188,20 @@ class ExporterTests(unittest.TestCase):
         merged_hooks = merge_codex_hooks(hooks, command)
         merged_hooks_again = merge_codex_hooks(merged_hooks, command)
         config_toml = merge_codex_config_toml('model = "gpt-5.5"\n')
+        legacy_config_toml = merge_codex_config_toml(
+            "[features]\n"
+            "codex_hooks = true\n"
+            "hooks = false\n"
+        )
 
         self.assertEqual(len(merged_hooks_again["hooks"]["Stop"]), 1)
         self.assertEqual(merged_hooks_again["hooks"]["Stop"][0]["hooks"][0]["command"], command)
         self.assertIn("[features]", config_toml)
-        self.assertIn("codex_hooks = true", config_toml)
+        self.assertIn("hooks = true", config_toml)
         self.assertIn('model = "gpt-5.5"', config_toml)
+        self.assertIn("hooks = true", legacy_config_toml)
+        self.assertNotIn("codex_hooks", legacy_config_toml)
+        self.assertEqual(legacy_config_toml.count("hooks = true"), 1)
 
     def test_merges_codex_writable_root_for_vault(self):
         from ai_convo_exporter.cli import merge_codex_config_toml

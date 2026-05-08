@@ -632,16 +632,16 @@ def merge_codex_config_toml(text: str, writable_root: str | None = None) -> str:
     in_features = False
     in_sandbox_workspace_write = False
     saw_features = False
-    saw_codex_hooks = False
+    saw_hooks = False
     saw_sandbox_workspace_write = False
     saw_writable_roots = False
 
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            if in_features and not saw_codex_hooks:
-                output.append("codex_hooks = true")
-                saw_codex_hooks = True
+            if in_features and not saw_hooks:
+                output.append("hooks = true")
+                saw_hooks = True
             if in_sandbox_workspace_write and writable_root and not saw_writable_roots:
                 output.append(render_writable_roots_line([writable_root]))
                 saw_writable_roots = True
@@ -649,9 +649,10 @@ def merge_codex_config_toml(text: str, writable_root: str | None = None) -> str:
             in_sandbox_workspace_write = stripped == "[sandbox_workspace_write]"
             saw_features = saw_features or in_features
             saw_sandbox_workspace_write = saw_sandbox_workspace_write or in_sandbox_workspace_write
-        if in_features and re.match(r"codex_hooks\s*=", stripped):
-            output.append("codex_hooks = true")
-            saw_codex_hooks = True
+        if in_features and re.match(r"(codex_)?hooks\s*=", stripped):
+            if not saw_hooks:
+                output.append("hooks = true")
+                saw_hooks = True
             continue
         if (
             in_sandbox_workspace_write
@@ -663,14 +664,14 @@ def merge_codex_config_toml(text: str, writable_root: str | None = None) -> str:
             continue
         output.append(line)
 
-    if in_features and not saw_codex_hooks:
-        output.append("codex_hooks = true")
+    if in_features and not saw_hooks:
+        output.append("hooks = true")
     if in_sandbox_workspace_write and writable_root and not saw_writable_roots:
         output.append(render_writable_roots_line([writable_root]))
     if not saw_features:
         if output and output[-1].strip():
             output.append("")
-        output.extend(["[features]", "codex_hooks = true"])
+        output.extend(["[features]", "hooks = true"])
     if writable_root and not saw_sandbox_workspace_write:
         if output and output[-1].strip():
             output.append("")
