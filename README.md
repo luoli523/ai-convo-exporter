@@ -61,6 +61,7 @@ The installer:
 - Adds a Claude Code `Stop` hook to `~/.claude/settings.json`.
 - Adds a Codex `Stop` hook to `~/.codex/hooks.json`.
 - Enables Codex hooks in `~/.codex/config.toml`.
+- Adds the Obsidian vault to Codex `sandbox_workspace_write.writable_roots` so the hook can write notes while Codex runs in workspace-write mode.
 
 Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates.
 

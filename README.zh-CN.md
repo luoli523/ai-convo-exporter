@@ -61,6 +61,7 @@ Obsidian Vault/
 - 向 `~/.claude/settings.json` 添加 Claude Code `Stop` hook。
 - 向 `~/.codex/hooks.json` 添加 Codex `Stop` hook。
 - 在 `~/.codex/config.toml` 中启用 Codex hooks。
+- 把 Obsidian vault 加入 Codex 的 `sandbox_workspace_write.writable_roots`，让 hook 在 workspace-write 模式下也能写入笔记。
 
 安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。
 

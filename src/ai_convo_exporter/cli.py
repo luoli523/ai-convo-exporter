@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import configparser
 import json
 import os
@@ -601,12 +602,39 @@ def merge_codex_hooks(hooks_config: dict[str, Any], command: str) -> dict[str, A
     return result
 
 
-def merge_codex_config_toml(text: str) -> str:
+def toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def render_writable_roots_line(writable_roots: list[str]) -> str:
+    values = ", ".join(toml_string(root) for root in writable_roots)
+    return f"writable_roots = [{values}]"
+
+
+def merge_writable_roots_line(line: str, writable_root: str) -> str:
+    try:
+        value = line.split("=", 1)[1].strip()
+        roots = ast.literal_eval(value)
+    except (IndexError, SyntaxError, ValueError):
+        roots = []
+
+    if not isinstance(roots, list):
+        roots = []
+    normalized = [str(root) for root in roots if isinstance(root, str)]
+    if writable_root not in normalized:
+        normalized.append(writable_root)
+    return render_writable_roots_line(normalized)
+
+
+def merge_codex_config_toml(text: str, writable_root: str | None = None) -> str:
     lines = text.splitlines()
     output: list[str] = []
     in_features = False
+    in_sandbox_workspace_write = False
     saw_features = False
     saw_codex_hooks = False
+    saw_sandbox_workspace_write = False
+    saw_writable_roots = False
 
     for line in lines:
         stripped = line.strip()
@@ -614,20 +642,44 @@ def merge_codex_config_toml(text: str) -> str:
             if in_features and not saw_codex_hooks:
                 output.append("codex_hooks = true")
                 saw_codex_hooks = True
+            if in_sandbox_workspace_write and writable_root and not saw_writable_roots:
+                output.append(render_writable_roots_line([writable_root]))
+                saw_writable_roots = True
             in_features = stripped == "[features]"
+            in_sandbox_workspace_write = stripped == "[sandbox_workspace_write]"
             saw_features = saw_features or in_features
+            saw_sandbox_workspace_write = saw_sandbox_workspace_write or in_sandbox_workspace_write
         if in_features and re.match(r"codex_hooks\s*=", stripped):
             output.append("codex_hooks = true")
             saw_codex_hooks = True
+            continue
+        if (
+            in_sandbox_workspace_write
+            and writable_root
+            and re.match(r"writable_roots\s*=", stripped)
+        ):
+            output.append(merge_writable_roots_line(stripped, writable_root))
+            saw_writable_roots = True
             continue
         output.append(line)
 
     if in_features and not saw_codex_hooks:
         output.append("codex_hooks = true")
+    if in_sandbox_workspace_write and writable_root and not saw_writable_roots:
+        output.append(render_writable_roots_line([writable_root]))
     if not saw_features:
         if output and output[-1].strip():
             output.append("")
         output.extend(["[features]", "codex_hooks = true"])
+    if writable_root and not saw_sandbox_workspace_write:
+        if output and output[-1].strip():
+            output.append("")
+        output.extend(
+            [
+                "[sandbox_workspace_write]",
+                render_writable_roots_line([writable_root]),
+            ]
+        )
     return "\n".join(output).rstrip() + "\n"
 
 
@@ -657,6 +709,7 @@ def install_config(args: argparse.Namespace) -> int:
         print(f"Would set vault: {config.vault_dir}")
         print(f"Would install Claude hook command: {command} --provider claude")
         print(f"Would install Codex hook command: {command} --provider codex")
+        print(f"Would add Codex writable root: {config.vault_dir}")
         return 0
 
     save_config(config, home)
@@ -683,7 +736,10 @@ def install_config(args: argparse.Namespace) -> int:
 
     codex_config_path = codex_dir / "config.toml"
     codex_config = codex_config_path.read_text(encoding="utf-8") if codex_config_path.exists() else ""
-    codex_config_path.write_text(merge_codex_config_toml(codex_config), encoding="utf-8")
+    codex_config_path.write_text(
+        merge_codex_config_toml(codex_config, str(config.vault_dir)),
+        encoding="utf-8",
+    )
 
     print(f"Installed ai-convo-exporter config at {config_path(home)}")
     print(f"Vault: {config.vault_dir}")

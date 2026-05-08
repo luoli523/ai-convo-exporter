@@ -195,6 +195,24 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("codex_hooks = true", config_toml)
         self.assertIn('model = "gpt-5.5"', config_toml)
 
+    def test_merges_codex_writable_root_for_vault(self):
+        from ai_convo_exporter.cli import merge_codex_config_toml
+
+        config_toml = merge_codex_config_toml(
+            'model = "gpt-5.5"\n\n'
+            "[sandbox_workspace_write]\n"
+            'writable_roots = ["/tmp/existing"]\n',
+            "/Users/me/Obsidian Vault",
+        )
+        config_toml_again = merge_codex_config_toml(
+            config_toml,
+            "/Users/me/Obsidian Vault",
+        )
+
+        self.assertIn("[sandbox_workspace_write]", config_toml_again)
+        self.assertIn('"/tmp/existing"', config_toml_again)
+        self.assertEqual(config_toml_again.count('"/Users/me/Obsidian Vault"'), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
