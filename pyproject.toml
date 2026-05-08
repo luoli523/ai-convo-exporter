@@ -1,0 +1,12 @@
+[project]
+name = "ai-convo-exporter"
+version = "0.1.0"
+description = "Export Codex and Claude Code conversations into an Obsidian vault."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+ai-convo-exporter = "ai_convo_exporter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
