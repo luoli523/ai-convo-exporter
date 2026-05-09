@@ -14,11 +14,13 @@ The exporter keeps two copies of each conversation:
 ```text
 ~/Documents/obsidian/
   AI Conversations/
+    Daily/
+      2026-05-08.md                              # daily roll-up (one line per session)
     Projects/
       ads_attribution/
         _index.md
         sessions/
-          20260508-codex-save-chat.md
+          20260508-codex-保存对话.md            # CJK / unicode preserved
         raw/
           codex/
             019e0544-7beb-7983-a458-de94206793f8.jsonl
@@ -26,7 +28,36 @@ The exporter keeps two copies of each conversation:
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-Project folders use the short project name. When a checkout has a git remote, the exporter uses the repository name, for example `ads_attribution` from `luoli523/ads_attribution`. If no git remote is found, it falls back to the directory name. Session note filenames use `YYYYMMDD-[codex|claude]-[ascii-session-name].md`, where `YYYYMMDD` is the session's last updated date. Non-ASCII title text is dropped, with the session id prefix as a fallback.
+Project folders use the short project name. When a checkout has a git remote, the exporter uses the repository name, for example `ads_attribution` from `luoli523/ads_attribution`. If no git remote is found, it falls back to the directory name. Session note filenames use `YYYYMMDD-[codex|claude]-<title-slug>.md`, where the slug preserves CJK / unicode word characters and only normalizes punctuation and whitespace.
+
+## What's in a session note
+
+Each session note has rich frontmatter that Obsidian's Dataview can query:
+
+```yaml
+type: ai-conversation
+provider: claude
+session_id: 5a7c7cb2-...
+project: ai-convo-exporter
+project_slug: ai-convo-exporter
+created: 2026-05-09T15:25:48+08:00
+updated: 2026-05-09T18:35:15+08:00
+cwd: /Users/me/work/ai-convo-exporter
+git_repo: https://github.com/luoli523/ai-convo-exporter.git
+git_branch: feat/enrich-markdown
+machine: my-laptop
+raw_transcript: ../raw/claude/5a7c7cb2-....jsonl
+tool_call_count: 171
+tools_used: [Bash, Edit, Read, TaskCreate, ToolSearch]
+related_files: [src/ai_convo_exporter/cli.py, tests/test_exporter.py, README.md]
+related_sessions: ["[[20260507-claude-vault-detection]]"]
+decision_count: 11
+tags: [ai/conversation, provider/claude, project/ai-convo-exporter]
+```
+
+The body opens with a TL;DR callout (topic, turn counts, files touched, decisions flagged), then the conversation. Assistant messages whose content is purely operational (e.g. running tools, narrating file edits) are wrapped in collapsed `> [!action]-` callouts so they don't dominate re-reading. Messages containing decision-indicator phrases ("我建议", "decision:", "let's go with", etc.) get a `> [!decision]+` callout marker.
+
+The Daily/ note is updated on every export with one [[wiki-link]] line per session for that day, so Obsidian's Daily Notes / Periodic Notes workflows can surface AI work alongside other daily notes.
 
 ## Install
 

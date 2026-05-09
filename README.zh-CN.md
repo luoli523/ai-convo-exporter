@@ -14,11 +14,13 @@
 ```text
 ~/Documents/obsidian/
   AI Conversations/
+    Daily/
+      2026-05-08.md                              # 当日所有 session 的汇总，一行一条
     Projects/
       ads_attribution/
         _index.md
         sessions/
-          20260508-codex-save-chat.md
+          20260508-codex-保存对话.md            # 中文 / Unicode 标题完整保留
         raw/
           codex/
             019e0544-7beb-7983-a458-de94206793f8.jsonl
@@ -26,7 +28,36 @@
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-项目文件夹直接使用短项目名。只要当前 checkout 有 git remote，导出器会取仓库名，例如从 `luoli523/ads_attribution` 得到 `ads_attribution`。如果没有 git remote，则退回使用当前目录名。Session 笔记文件名使用 `YYYYMMDD-[codex|claude]-[ascii-session-name].md`，其中 `YYYYMMDD` 是 session 最后更新时间。非 ASCII 标题文本会被丢弃，如果清理后为空则退回使用 session id 前缀。
+项目文件夹直接使用短项目名。只要当前 checkout 有 git remote，导出器会取仓库名，例如从 `luoli523/ads_attribution` 得到 `ads_attribution`。如果没有 git remote，则退回使用当前目录名。Session 笔记文件名使用 `YYYYMMDD-[codex|claude]-<title-slug>.md`，slug 会保留 CJK / Unicode 字符，只把标点和空白规范化成 `-`。
+
+## Session 笔记里有什么
+
+每篇 session 笔记的 frontmatter 信息丰富，Obsidian 的 Dataview 可以直接查询：
+
+```yaml
+type: ai-conversation
+provider: claude
+session_id: 5a7c7cb2-...
+project: ai-convo-exporter
+project_slug: ai-convo-exporter
+created: 2026-05-09T15:25:48+08:00
+updated: 2026-05-09T18:35:15+08:00
+cwd: /Users/me/work/ai-convo-exporter
+git_repo: https://github.com/luoli523/ai-convo-exporter.git
+git_branch: feat/enrich-markdown
+machine: my-laptop
+raw_transcript: ../raw/claude/5a7c7cb2-....jsonl
+tool_call_count: 171
+tools_used: [Bash, Edit, Read, TaskCreate, ToolSearch]
+related_files: [src/ai_convo_exporter/cli.py, tests/test_exporter.py, README.md]
+related_sessions: ["[[20260507-claude-vault-detection]]"]
+decision_count: 11
+tags: [ai/conversation, provider/claude, project/ai-convo-exporter]
+```
+
+正文开头是 TL;DR 摘要（主题、讨论/实现轮次、涉及文件、决策数），接下来是对话内容。纯操作性的 assistant 消息（执行工具、叙述文件改动等）会被包进折叠的 `> [!action]-` callout，复读时不抢主视觉。包含决策性短语（"我建议"、"decision:"、"let's go with" 等）的消息会被加上 `> [!decision]+` 标记。
+
+Daily/ 目录下的笔记每次导出都会更新，按当日逐条列出 session 的 [[wiki 链接]]。这样 Obsidian 的 Daily Notes / Periodic Notes 工作流可以自然地把 AI 工作和当日笔记汇总在一起。
 
 ## 安装
 
