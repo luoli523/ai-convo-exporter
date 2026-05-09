@@ -1,21 +1,60 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 from ai_convo_exporter.cli import (
     ExportConfig,
+    Message,
+    Transcript,
     ascii_slug,
     default_vault_dir,
     export_transcript,
+    load_config,
     merge_claude_settings,
     merge_codex_config_toml,
     merge_codex_hooks,
+    should_export_from_hook,
 )
 
 
 class ExporterTests(unittest.TestCase):
+    def test_manual_hook_policy_requires_save_chat_trigger(self):
+        transcript = Transcript(
+            provider="codex",
+            session_id="session-1",
+            messages=[
+                Message(role="user", text="Just a quick command"),
+                Message(role="assistant", text="Done"),
+            ],
+            created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+            updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
+        )
+        config = ExportConfig(vault_dir=Path("/tmp/vault"))
+
+        self.assertFalse(should_export_from_hook(transcript, config))
+
+        transcript.messages.append(Message(role="user", text="#save-chat"))
+
+        self.assertTrue(should_export_from_hook(transcript, config))
+
+    def test_hook_skip_trigger_overrides_manual_save_trigger(self):
+        transcript = Transcript(
+            provider="codex",
+            session_id="session-1",
+            messages=[
+                Message(role="user", text="#save-chat"),
+                Message(role="user", text="#nosave"),
+            ],
+            created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+            updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
+        )
+        config = ExportConfig(vault_dir=Path("/tmp/vault"))
+
+        self.assertFalse(should_export_from_hook(transcript, config))
+
     def test_exports_codex_transcript_by_stable_git_project(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -266,6 +305,16 @@ class ExporterTests(unittest.TestCase):
             home = Path(tmp)
             with patch.dict("os.environ", {"AI_CONVO_VAULT": ""}):
                 self.assertEqual(default_vault_dir(home), home / "Documents" / "obsidian")
+
+    def test_default_config_uses_manual_save_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with patch.dict("os.environ", {"AI_CONVO_CONFIG": "", "AI_CONVO_VAULT": ""}):
+                config = load_config(home)
+
+        self.assertEqual(config.save_policy, "manual")
+        self.assertEqual(config.save_triggers, ["#save-chat"])
+        self.assertEqual(config.skip_triggers, ["#nosave"])
 
     def test_merges_hooks_without_dropping_existing_config(self):
         command = "$HOME/.local/bin/ai-convo-exporter hook --provider claude"

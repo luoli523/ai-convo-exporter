@@ -65,6 +65,8 @@
 
 安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。
 
+默认情况下，hook 使用手动保存模式。只有当用户消息中有单独一行 `#save-chat` 时，当前对话才会被导出。加入 `#nosave` 可以阻止保存，即使对话里同时有保存触发词。手动运行 `export`、`scan`、`backfill` 时仍会直接导出 transcript，不受 hook 策略影响。
+
 ## 命令
 
 ```bash
@@ -98,7 +100,10 @@ ai-convo-exporter doctor
   "conversations_dir": "AI Conversations",
   "timezone": "Asia/Singapore",
   "machine": "hostname",
-  "archive_raw": true
+  "archive_raw": true,
+  "save_policy": "manual",
+  "save_triggers": ["#save-chat"],
+  "skip_triggers": ["#nosave"]
 }
 ```
 

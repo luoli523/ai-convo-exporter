@@ -20,6 +20,9 @@ from zoneinfo import ZoneInfo
 
 DEFAULT_CONVERSATIONS_DIR = "AI Conversations"
 DEFAULT_TIMEZONE = "Asia/Singapore"
+DEFAULT_SAVE_POLICY = "manual"
+DEFAULT_SAVE_TRIGGERS = ["#save-chat"]
+DEFAULT_SKIP_TRIGGERS = ["#nosave"]
 HOOK_STATUS = {"continue": True, "suppressOutput": True}
 
 SKIP_PREFIXES = (
@@ -41,6 +44,9 @@ class ExportConfig:
     timezone: str = DEFAULT_TIMEZONE
     machine: str = field(default_factory=socket.gethostname)
     archive_raw: bool = True
+    save_policy: str = DEFAULT_SAVE_POLICY
+    save_triggers: list[str] = field(default_factory=lambda: list(DEFAULT_SAVE_TRIGGERS))
+    skip_triggers: list[str] = field(default_factory=lambda: list(DEFAULT_SKIP_TRIGGERS))
 
 
 @dataclass
@@ -91,6 +97,15 @@ def default_vault_dir(home: Path | None = None) -> Path:
     return home / "Documents" / "obsidian"
 
 
+def config_string_list(value: Any, default: list[str]) -> list[str]:
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value]
+        return [item for item in items if item]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return list(default)
+
+
 def load_config(home: Path | None = None) -> ExportConfig:
     path = config_path(home)
     data: dict[str, Any] = {}
@@ -103,6 +118,9 @@ def load_config(home: Path | None = None) -> ExportConfig:
         timezone=data.get("timezone", DEFAULT_TIMEZONE),
         machine=data.get("machine", socket.gethostname()),
         archive_raw=bool(data.get("archive_raw", True)),
+        save_policy=str(data.get("save_policy", DEFAULT_SAVE_POLICY)).lower(),
+        save_triggers=config_string_list(data.get("save_triggers"), DEFAULT_SAVE_TRIGGERS),
+        skip_triggers=config_string_list(data.get("skip_triggers"), DEFAULT_SKIP_TRIGGERS),
     )
 
 
@@ -115,6 +133,9 @@ def save_config(config: ExportConfig, home: Path | None = None) -> Path:
         "timezone": config.timezone,
         "machine": config.machine,
         "archive_raw": config.archive_raw,
+        "save_policy": config.save_policy,
+        "save_triggers": config.save_triggers,
+        "skip_triggers": config.skip_triggers,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
@@ -177,6 +198,34 @@ def extract_text(content: Any) -> str:
 def is_noise(text: str) -> bool:
     stripped = text.strip()
     return not stripped or any(stripped.startswith(prefix) for prefix in SKIP_PREFIXES)
+
+
+def trigger_in_text(text: str, triggers: list[str]) -> bool:
+    lines = [line.strip().lower() for line in text.splitlines()]
+    for trigger in triggers:
+        normalized = trigger.strip().lower()
+        if not normalized:
+            continue
+        if normalized in lines:
+            return True
+    return False
+
+
+def user_has_trigger(transcript: Transcript, triggers: list[str]) -> bool:
+    return any(
+        message.role == "user" and trigger_in_text(message.text, triggers)
+        for message in transcript.messages
+    )
+
+
+def should_export_from_hook(transcript: Transcript, config: ExportConfig) -> bool:
+    if user_has_trigger(transcript, config.skip_triggers):
+        return False
+    if config.save_policy == "always":
+        return True
+    if config.save_policy == "manual":
+        return user_has_trigger(transcript, config.save_triggers)
+    return False
 
 
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -567,7 +616,7 @@ def merge_claude_settings(settings: dict[str, Any], command: str) -> dict[str, A
         "type": "command",
         "command": command,
         "timeout": 30,
-        "statusMessage": "Saving conversation to Obsidian...",
+        "statusMessage": "Exporting conversation to Obsidian if requested...",
     }
 
     for group in stop_groups:
@@ -596,7 +645,7 @@ def merge_codex_hooks(hooks_config: dict[str, Any], command: str) -> dict[str, A
         "type": "command",
         "command": command,
         "timeout": 30,
-        "statusMessage": "Saving conversation to Obsidian...",
+        "statusMessage": "Exporting conversation to Obsidian if requested...",
     }
 
     for group in stop_groups:
@@ -767,6 +816,10 @@ def command_hook(args: argparse.Namespace) -> int:
         transcript_path = Path(transcript_value).expanduser()
         provider = args.provider or infer_provider(transcript_path)
         config = load_config()
+        transcript = parse_transcript(provider, transcript_path, cwd=str(payload.get("cwd") or ""))
+        if not should_export_from_hook(transcript, config):
+            print(json.dumps(HOOK_STATUS))
+            return 0
         export_transcript(provider, transcript_path, config, cwd=str(payload.get("cwd") or ""))
     except Exception as exc:
         status = {
@@ -811,6 +864,9 @@ def command_doctor(args: argparse.Namespace) -> int:
     print(f"Vault: {config.vault_dir}")
     print(f"Conversations dir: {config.conversations_dir}")
     print(f"Timezone: {config.timezone}")
+    print(f"Save policy: {config.save_policy}")
+    print(f"Save triggers: {', '.join(config.save_triggers)}")
+    print(f"Skip triggers: {', '.join(config.skip_triggers)}")
     print(f"Claude settings: {home / '.claude' / 'settings.json'}")
     print(f"Codex hooks: {home / '.codex' / 'hooks.json'}")
     print(f"Codex config: {home / '.codex' / 'config.toml'}")

@@ -65,6 +65,8 @@ The installer:
 
 Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates.
 
+By default, hooks use manual save mode. A conversation is exported only when a user message contains `#save-chat` on its own line. Add `#nosave` to skip saving even when a save trigger is present. Manual `export`, `scan`, and `backfill` commands still export transcripts directly.
+
 ## Commands
 
 ```bash
@@ -98,7 +100,10 @@ Default config:
   "conversations_dir": "AI Conversations",
   "timezone": "Asia/Singapore",
   "machine": "hostname",
-  "archive_raw": true
+  "archive_raw": true,
+  "save_policy": "manual",
+  "save_triggers": ["#save-chat"],
+  "skip_triggers": ["#nosave"]
 }
 ```
 
