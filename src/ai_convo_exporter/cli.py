@@ -216,6 +216,42 @@ def content_has_tool_use(content: Any) -> bool:
     )
 
 
+DECISION_PATTERNS = [
+    r"我建议",
+    r"我倾向",
+    r"我推荐",
+    r"我觉得应该",
+    r"我决定",
+    r"决策[:：]",
+    r"结论[:：]",
+    r"\bI recommend\b",
+    r"\bI'd recommend\b",
+    r"\bI suggest\b",
+    r"\blet's go with\b",
+    r"\blet's use\b",
+    r"\blet's pick\b",
+    r"\bdecision[:：]",
+    r"\bgoing with\b",
+    r"\bdecided to\b",
+]
+_DECISION_RE = re.compile("|".join(DECISION_PATTERNS), flags=re.IGNORECASE)
+
+
+def find_decision_snippet(text: str, window: int = 80) -> str | None:
+    """Return a short snippet around the first decision keyword, or None."""
+    match = _DECISION_RE.search(text)
+    if not match:
+        return None
+    start = max(0, match.start() - window)
+    end = min(len(text), match.end() + window)
+    snippet = text[start:end].replace("\n", " ").strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return snippet
+
+
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -609,6 +645,18 @@ def render_markdown(
         lines.append("related_files:")
         for path in related_files:
             lines.append(f"  - {yaml_value(path)}")
+    discussion_count = sum(
+        1 for m in transcript.messages if m.role == "assistant" and m.kind == "discussion"
+    )
+    action_count = sum(
+        1 for m in transcript.messages if m.role == "assistant" and m.kind == "action"
+    )
+    decision_count = sum(
+        1 for m in transcript.messages
+        if m.role == "assistant" and find_decision_snippet(m.text) is not None
+    )
+    if decision_count:
+        lines.append(f"decision_count: {decision_count}")
     lines.extend([
         "tags:",
         "  - ai/conversation",
@@ -618,6 +666,16 @@ def render_markdown(
         "",
         f"# {title}",
         "",
+    ])
+    lines.extend(render_tldr(
+        first_user=transcript.title or first_title,
+        discussion=discussion_count,
+        action=action_count,
+        files=len(related_files),
+        tool_calls=transcript.tool_usage.total_calls,
+        decisions=decision_count,
+    ))
+    lines.extend([
         f"- Provider: `{transcript.provider}`",
         f"- Project: `{project}`",
         f"- Session: `{transcript.session_id}`",
@@ -631,22 +689,65 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_tldr(
+    first_user: str,
+    discussion: int,
+    action: int,
+    files: int,
+    tool_calls: int,
+    decisions: int,
+) -> list[str]:
+    topic = (first_user or "").replace("\n", " ").strip()
+    if len(topic) > 120:
+        topic = topic[:120].rstrip() + "..."
+    lines = ["> [!tldr]+ TL;DR"]
+    if topic:
+        lines.append(f"> - **Topic**: {topic}")
+    lines.append(f"> - **Turns**: {discussion} discussion · {action} action")
+    if files:
+        lines.append(f"> - **Files touched**: {files}")
+    if tool_calls:
+        lines.append(f"> - **Tool calls**: {tool_calls}")
+    if decisions:
+        lines.append(f"> - **Decisions flagged**: {decisions} (see `[!decision]` callouts below)")
+    lines.extend(["", "---", ""])
+    return lines
+
+
 def render_message(message: Message) -> list[str]:
     label = "User" if message.role == "user" else "Assistant"
+    decision_snippet = (
+        find_decision_snippet(message.text) if message.role == "assistant" else None
+    )
+
     if message.kind == "action" and message.role == "assistant":
         lines = [f"## {label}", ""]
         if message.timestamp:
             lines.extend([f"> {message.timestamp}", ""])
+        if decision_snippet:
+            lines.extend(_decision_callout_lines(decision_snippet))
         lines.append("> [!action]- action")
         for content_line in message.text.split("\n"):
             lines.append(f"> {content_line}" if content_line else ">")
         lines.extend(["", "---", ""])
         return lines
+
     lines = [f"## {label}", ""]
     if message.timestamp:
         lines.extend([f"> {message.timestamp}", ""])
+    if decision_snippet:
+        lines.extend(_decision_callout_lines(decision_snippet))
     lines.extend([message.text, "", "---", ""])
     return lines
+
+
+def _decision_callout_lines(snippet: str) -> list[str]:
+    safe = snippet.replace("\n", " ")
+    return [
+        "> [!decision]+ Decision",
+        f"> {safe}",
+        "",
+    ]
 
 
 def write_project_index(project_dir: Path, project: str, project_slug: str, conversations_dir: str) -> None:

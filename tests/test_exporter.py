@@ -11,6 +11,7 @@ from ai_convo_exporter.cli import (
     export_transcript,
     extract_claude_tool_usage,
     extract_codex_tool_usage,
+    find_decision_snippet,
     merge_claude_settings,
     merge_codex_config_toml,
     merge_codex_hooks,
@@ -527,6 +528,61 @@ class ExporterTests(unittest.TestCase):
             # Second assistant (no following function_call) stays as discussion
             self.assertIn("\n结论是 X\n", md)
             self.assertEqual(md.count("[!action]"), 1)
+
+    def test_find_decision_snippet_matches_chinese_and_english(self):
+        self.assertIsNotNone(find_decision_snippet("我建议主推 pipx 路径"))
+        self.assertIsNotNone(find_decision_snippet("Let's go with option B for now"))
+        self.assertIsNotNone(find_decision_snippet("Decision: keep zero-deps"))
+        self.assertIsNone(find_decision_snippet("Just thinking out loud here"))
+        self.assertIsNone(find_decision_snippet(""))
+
+    def test_export_includes_tldr_and_decision_callouts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "p"
+            project.mkdir()
+            transcript = root / "claude.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps({
+                            "type": "user",
+                            "message": {"role": "user",
+                                        "content": "请帮我设计一个 vault 检测方案"},
+                            "cwd": str(project), "sessionId": "s1",
+                            "timestamp": "2026-05-08T01:00:00Z",
+                        }),
+                        json.dumps({
+                            "type": "assistant",
+                            "message": {"role": "assistant", "content": [
+                                {"type": "text",
+                                 "text": "我建议从 obsidian.json 注册表读取。"},
+                            ]},
+                            "cwd": str(project), "sessionId": "s1",
+                            "timestamp": "2026-05-08T01:01:00Z",
+                        }),
+                        json.dumps({
+                            "type": "assistant",
+                            "message": {"role": "assistant", "content": [
+                                {"type": "text", "text": "其它细节也讨论一下"},
+                            ]},
+                            "cwd": str(project), "sessionId": "s1",
+                            "timestamp": "2026-05-08T01:02:00Z",
+                        }),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("claude", transcript, config, cwd=str(project))
+            md = result.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("decision_count: 1", md)
+            self.assertIn("> [!tldr]+ TL;DR", md)
+            self.assertIn("**Topic**: 请帮我设计一个 vault 检测方案", md)
+            self.assertIn("**Turns**: 2 discussion · 0 action", md)
+            self.assertIn("**Decisions flagged**: 1", md)
+            self.assertIn("> [!decision]+ Decision", md)
+            self.assertIn("我建议", md)
 
     def test_export_includes_related_files_and_tools_in_frontmatter(self):
         with tempfile.TemporaryDirectory() as tmp:
