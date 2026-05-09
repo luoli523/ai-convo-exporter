@@ -12,13 +12,13 @@ The exporter keeps two copies of each conversation:
 ## Layout
 
 ```text
-Obsidian Vault/
+~/Documents/obsidian/
   AI Conversations/
     Projects/
-      luoli523__ads-attribution/
+      ads_attribution/
         _index.md
         sessions/
-          2026-05-08 0947 codex 019e0544 save-chat.md
+          20260508-codex-save-chat.md
         raw/
           codex/
             019e0544-7beb-7983-a458-de94206793f8.jsonl
@@ -26,7 +26,7 @@ Obsidian Vault/
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-Project folders are stable across machines. When a checkout has a git remote, the exporter uses the remote path, for example `luoli523/ads_attribution`, and converts it to an Obsidian-safe folder slug such as `luoli523__ads-attribution`. If no git remote is found, it falls back to the directory name.
+Project folders use the short project name. When a checkout has a git remote, the exporter uses the repository name, for example `ads_attribution` from `luoli523/ads_attribution`. If no git remote is found, it falls back to the directory name. Session note filenames use `YYYYMMDD-[codex|claude]-[ascii-session-name].md`, where `YYYYMMDD` is the session's last updated date. Non-ASCII title text is dropped, with the session id prefix as a fallback.
 
 ## Install
 
@@ -39,7 +39,7 @@ From a fresh checkout:
 With an explicit vault:
 
 ```bash
-./install.sh --vault "$HOME/Documents/Obsidian Vault"
+./install.sh --vault "$HOME/Documents/obsidian"
 ```
 
 Install and import historical local transcripts:
@@ -94,7 +94,7 @@ Default config:
 
 ```json
 {
-  "vault_dir": "~/Documents/Obsidian Vault",
+  "vault_dir": "~/Documents/obsidian",
   "conversations_dir": "AI Conversations",
   "timezone": "Asia/Singapore",
   "machine": "hostname",

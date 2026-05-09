@@ -2,9 +2,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ai_convo_exporter.cli import (
     ExportConfig,
+    ascii_slug,
+    default_vault_dir,
     export_transcript,
     merge_claude_settings,
     merge_codex_config_toml,
@@ -89,14 +92,16 @@ class ExporterTests(unittest.TestCase):
             config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
             result = export_transcript("codex", transcript, config, cwd=str(project))
 
-            self.assertEqual(result.project_slug, "luoli523__ads-attribution")
+            self.assertEqual(result.project, "ads_attribution")
+            self.assertEqual(result.project_slug, "ads_attribution")
             self.assertTrue(result.markdown_path.exists())
             self.assertTrue(result.raw_path.exists())
+            self.assertEqual(result.markdown_path.name, "20260508-codex-019e0544.md")
 
             markdown = result.markdown_path.read_text(encoding="utf-8")
             self.assertIn("provider: codex", markdown)
-            self.assertIn("project: luoli523/ads_attribution", markdown)
-            self.assertIn("project_slug: luoli523__ads-attribution", markdown)
+            self.assertIn("project: ads_attribution", markdown)
+            self.assertIn("project_slug: ads_attribution", markdown)
             self.assertIn("保存对话", markdown)
             self.assertIn("已保存", markdown)
 
@@ -155,6 +160,112 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("开始", markdown)
             self.assertIn("继续", markdown)
             self.assertNotIn("hidden", markdown)
+
+    def test_session_filename_uses_ascii_slug_from_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:47:14.000Z",
+                                "type": "session_meta",
+                                "payload": {
+                                    "id": "019e0544-7beb-7983-a458-de94206793f8",
+                                    "timestamp": "2026-05-08T01:47:14.000Z",
+                                    "cwd": str(project),
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:48:30.000Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "user",
+                                    "content": [{"type": "input_text", "text": "Fix exporter bug"}],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("codex", transcript, config, cwd=str(project))
+
+            self.assertEqual(result.markdown_path.name, "20260508-codex-fix-exporter-bug.md")
+
+    def test_session_filename_uses_updated_date_and_removes_stale_note(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:47:14.000Z",
+                                "type": "session_meta",
+                                "payload": {
+                                    "id": "019e0544-7beb-7983-a458-de94206793f8",
+                                    "timestamp": "2026-05-08T01:47:14.000Z",
+                                    "cwd": str(project),
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-09T03:48:30.000Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "user",
+                                    "content": [{"type": "input_text", "text": "Fix exporter bug"}],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            sessions_dir = root / "vault" / "AI Conversations" / "Projects" / "plain-project" / "sessions"
+            sessions_dir.mkdir(parents=True)
+            stale_note = sessions_dir / "20260508-codex-fix-exporter-bug.md"
+            stale_note.write_text(
+                "---\n"
+                "session_id: 019e0544-7beb-7983-a458-de94206793f8\n"
+                "---\n",
+                encoding="utf-8",
+            )
+
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("codex", transcript, config, cwd=str(project))
+
+            self.assertEqual(result.markdown_path.name, "20260509-codex-fix-exporter-bug.md")
+            self.assertTrue(result.markdown_path.exists())
+            self.assertFalse(stale_note.exists())
+
+    def test_ascii_session_slug_drops_non_ascii_and_falls_back(self):
+        self.assertEqual(ascii_slug("修复 codex hook", "session"), "codex-hook")
+        self.assertEqual(ascii_slug("保存对话", "019e0544"), "019e0544")
+
+    def test_default_vault_dir_uses_documents_obsidian(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with patch.dict("os.environ", {"AI_CONVO_VAULT": ""}):
+                self.assertEqual(default_vault_dir(home), home / "Documents" / "obsidian")
 
     def test_merges_hooks_without_dropping_existing_config(self):
         command = "$HOME/.local/bin/ai-convo-exporter hook --provider claude"

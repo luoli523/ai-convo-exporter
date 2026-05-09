@@ -12,13 +12,13 @@
 ## 目录结构
 
 ```text
-Obsidian Vault/
+~/Documents/obsidian/
   AI Conversations/
     Projects/
-      luoli523__ads-attribution/
+      ads_attribution/
         _index.md
         sessions/
-          2026-05-08 0947 codex 019e0544 save-chat.md
+          20260508-codex-save-chat.md
         raw/
           codex/
             019e0544-7beb-7983-a458-de94206793f8.jsonl
@@ -26,7 +26,7 @@ Obsidian Vault/
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-项目文件夹在多台机器之间保持稳定。只要当前 checkout 有 git remote，导出器会优先使用 remote path，例如 `luoli523/ads_attribution`，并转换成适合 Obsidian 文件夹使用的 slug，例如 `luoli523__ads-attribution`。如果没有 git remote，则退回使用当前目录名。
+项目文件夹直接使用短项目名。只要当前 checkout 有 git remote，导出器会取仓库名，例如从 `luoli523/ads_attribution` 得到 `ads_attribution`。如果没有 git remote，则退回使用当前目录名。Session 笔记文件名使用 `YYYYMMDD-[codex|claude]-[ascii-session-name].md`，其中 `YYYYMMDD` 是 session 最后更新时间。非 ASCII 标题文本会被丢弃，如果清理后为空则退回使用 session id 前缀。
 
 ## 安装
 
@@ -39,7 +39,7 @@ Obsidian Vault/
 指定 Obsidian vault：
 
 ```bash
-./install.sh --vault "$HOME/Documents/Obsidian Vault"
+./install.sh --vault "$HOME/Documents/obsidian"
 ```
 
 安装并导入本机历史 transcript：
@@ -94,7 +94,7 @@ ai-convo-exporter doctor
 
 ```json
 {
-  "vault_dir": "~/Documents/Obsidian Vault",
+  "vault_dir": "~/Documents/obsidian",
   "conversations_dir": "AI Conversations",
   "timezone": "Asia/Singapore",
   "machine": "hostname",

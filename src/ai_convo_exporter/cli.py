@@ -88,15 +88,7 @@ def default_vault_dir(home: Path | None = None) -> Path:
         return Path(env_vault).expanduser()
     if home is None:
         home = Path.home()
-    candidates = [
-        home / "Documents" / "Obsidian Vault",
-        home / "Obsidian Vault",
-        home / "Documents" / "Obsidian",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[0]
+    return home / "Documents" / "obsidian"
 
 
 def load_config(home: Path | None = None) -> ExportConfig:
@@ -128,18 +120,19 @@ def save_config(config: ExportConfig, home: Path | None = None) -> Path:
     return path
 
 
-def slugify(value: str, fallback: str = "unknown") -> str:
-    value = value.strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    value = re.sub(r"-+", "-", value).strip("-")
-    return value or fallback
-
-
-def safe_filename(value: str, max_len: int = 72) -> str:
+def safe_filename(value: str, max_len: int = 72, fallback: str = "untitled") -> str:
     value = value.replace("\n", " ").strip()
     value = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", "", value)
     value = re.sub(r"\s+", " ", value).strip()
-    return (value[:max_len].strip() or "untitled")
+    return (value[:max_len].strip() or fallback)
+
+
+def ascii_slug(value: str, fallback: str, max_len: int = 72) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = re.sub(r"-+", "-", value).strip("-")
+    value = value[:max_len].strip("-")
+    return value or fallback
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -389,6 +382,13 @@ def repo_id_from_url(url: str) -> str:
     return path
 
 
+def repo_name_from_url(url: str) -> str:
+    repo_id = repo_id_from_url(url)
+    if not repo_id:
+        return ""
+    return repo_id.rsplit("/", 1)[-1]
+
+
 def project_identity(transcript: Transcript) -> tuple[str, str, str, str]:
     git_repo = transcript.git_repo
     git_branch = transcript.git_branch
@@ -396,14 +396,10 @@ def project_identity(transcript: Transcript) -> tuple[str, str, str, str]:
     git_repo = git_repo or detected_repo
     git_branch = git_branch or detected_branch
 
-    repo_id = repo_id_from_url(git_repo)
-    if repo_id:
-        project = repo_id
-        project_slug = "__".join(slugify(segment) for segment in repo_id.split("/"))
-    else:
-        name = Path(transcript.cwd).name if transcript.cwd else "unknown"
-        project = name
-        project_slug = slugify(name)
+    repo_name = repo_name_from_url(git_repo)
+    name = repo_name or (Path(transcript.cwd).name if transcript.cwd else "unknown")
+    project = safe_filename(name, 80, "unknown")
+    project_slug = project
     return project, project_slug, git_repo, git_branch
 
 
@@ -483,6 +479,19 @@ def write_project_index(project_dir: Path, project: str, project_slug: str, conv
     index_path.write_text(index, encoding="utf-8")
 
 
+def remove_stale_session_notes(sessions_dir: Path, current_path: Path, session_id: str) -> None:
+    marker = f"session_id: {session_id}"
+    for path in sessions_dir.glob("*.md"):
+        if path == current_path:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if marker in text:
+            path.unlink()
+
+
 def export_transcript(provider: str, transcript_path: Path, config: ExportConfig, cwd: str = "") -> ExportResult:
     transcript_path = transcript_path.expanduser()
     if not transcript_path.exists():
@@ -503,12 +512,12 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
     if config.archive_raw:
         shutil.copy2(transcript_path, raw_path)
 
-    local_created = to_local(transcript.created, config.timezone)
-    title = safe_filename(transcript.title or transcript.session_id)
-    filename = (
-        f"{local_created.strftime('%Y-%m-%d %H%M')} "
-        f"{transcript.provider} {transcript.session_id[:8]} {title}.md"
+    local_updated = to_local(transcript.updated, config.timezone)
+    title = ascii_slug(
+        transcript.title or transcript.session_id,
+        transcript.session_id[:8] or "session",
     )
+    filename = f"{local_updated.strftime('%Y%m%d')}-{transcript.provider}-{title}.md"
     markdown_path = sessions_dir / filename
     raw_rel_path = os.path.relpath(raw_path, markdown_path.parent)
     markdown = render_markdown(
@@ -521,6 +530,7 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
         raw_rel_path=raw_rel_path,
     )
     markdown_path.write_text(markdown, encoding="utf-8")
+    remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
     write_project_index(project_dir, project, project_slug, config.conversations_dir)
     return ExportResult(
         markdown_path=markdown_path,

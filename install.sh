@@ -6,7 +6,7 @@ usage() {
 Usage: ./install.sh [options]
 
 Options:
-  --vault PATH          Obsidian vault path. Defaults to AI_CONVO_VAULT or ~/Documents/Obsidian Vault.
+  --vault PATH          Obsidian vault path. Defaults to AI_CONVO_VAULT or ~/Documents/obsidian.
   --home PATH           Home directory to configure. Useful for tests.
   --timezone NAME       IANA timezone for note timestamps. Default: Asia/Singapore.
   --conversations-dir NAME
@@ -64,15 +64,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$vault_dir" ]]; then
-  if [[ -d "$home_dir/Documents/Obsidian Vault" ]]; then
-    vault_dir="$home_dir/Documents/Obsidian Vault"
-  elif [[ -d "$home_dir/Obsidian Vault" ]]; then
-    vault_dir="$home_dir/Obsidian Vault"
-  elif [[ -d "$home_dir/Documents/Obsidian" ]]; then
-    vault_dir="$home_dir/Documents/Obsidian"
-  else
-    vault_dir="$home_dir/Documents/Obsidian Vault"
-  fi
+  vault_dir="$home_dir/Documents/obsidian"
 fi
 
 bin_dir="$home_dir/.local/bin"
