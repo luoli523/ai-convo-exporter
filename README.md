@@ -36,7 +36,15 @@ From a fresh checkout:
 ./install.sh
 ```
 
-With an explicit vault:
+Without `--vault`, the installer reads Obsidian's vault registry
+(`~/Library/Application Support/obsidian/obsidian.json` on macOS,
+`~/.config/obsidian/obsidian.json` on Linux) and prompts you to pick one.
+If exactly one vault exists it is offered with `[Y/n]`. If multiple vaults
+exist they are listed by recency (currently open first), with `m` to enter
+a path manually. If Obsidian is not installed or has never been opened,
+the installer exits with instructions and does nothing.
+
+With an explicit vault (skips detection, works non-interactively):
 
 ```bash
 ./install.sh --vault "$HOME/Documents/obsidian"
@@ -63,7 +71,7 @@ The installer:
 - Enables Codex hooks with `[features] hooks = true` in `~/.codex/config.toml`.
 - Adds the Obsidian vault to Codex `sandbox_workspace_write.writable_roots` so the hook can write notes while Codex runs in workspace-write mode.
 
-Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates.
+Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates. When re-run without `--vault`, the previously configured vault is marked `[current]` in the prompt and selected by default.
 
 ## Commands
 

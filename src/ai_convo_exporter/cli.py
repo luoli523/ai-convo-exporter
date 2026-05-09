@@ -704,9 +704,220 @@ def read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     return data if isinstance(data, dict) else default
 
 
+@dataclass
+class VaultCandidate:
+    path: Path
+    open: bool = False
+    ts: int = 0
+
+
+def obsidian_registry_path(home: Path | None = None) -> Path:
+    if home is None:
+        home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "Application Support" / "obsidian" / "obsidian.json"
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    return config_home / "obsidian" / "obsidian.json"
+
+
+def obsidian_app_installed(home: Path | None = None) -> bool:
+    if home is None:
+        home = Path.home()
+    if sys.platform == "darwin":
+        candidates = [
+            Path("/Applications/Obsidian.app"),
+            home / "Applications" / "Obsidian.app",
+        ]
+        return any(p.exists() for p in candidates)
+    return shutil.which("obsidian") is not None
+
+
+def read_obsidian_vaults(registry_path: Path) -> list[VaultCandidate]:
+    if not registry_path.exists():
+        return []
+    try:
+        data = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw = data.get("vaults") if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return []
+
+    out: list[VaultCandidate] = []
+    for entry in raw.values():
+        if not isinstance(entry, dict):
+            continue
+        path_value = entry.get("path")
+        if not isinstance(path_value, str) or not path_value:
+            continue
+        path = Path(path_value).expanduser()
+        if not path.is_dir():
+            continue
+        ts_value = entry.get("ts")
+        try:
+            ts = int(ts_value) if ts_value is not None else 0
+        except (TypeError, ValueError):
+            ts = 0
+        out.append(VaultCandidate(path=path, open=bool(entry.get("open")), ts=ts))
+
+    out.sort(key=lambda c: (not c.open, -c.ts))
+    return out
+
+
+def _format_vault_markers(candidate: VaultCandidate, current: Path | None) -> str:
+    markers: list[str] = []
+    if candidate.open:
+        markers.append("open")
+    if current is not None and candidate.path == current:
+        markers.append("current")
+    return f" [{', '.join(markers)}]" if markers else ""
+
+
+def select_vault(
+    candidates: list[VaultCandidate],
+    current: Path | None = None,
+    input_fn=input,
+    output_fn=print,
+) -> Path | None:
+    if not candidates:
+        return None
+
+    default_idx = 0
+    if current is not None:
+        for i, candidate in enumerate(candidates):
+            if candidate.path == current:
+                default_idx = i
+                break
+
+    if len(candidates) == 1:
+        only = candidates[0]
+        output_fn("Detected Obsidian vault:")
+        output_fn(f"  {only.path}{_format_vault_markers(only, current)}")
+        output_fn("")
+        try:
+            answer = input_fn("Use this vault? [Y/n/m] (m = enter a different path) ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer in {"", "y", "yes"}:
+            return only.path
+        if answer == "m":
+            try:
+                manual = input_fn("Enter Obsidian vault path: ").strip()
+            except EOFError:
+                return None
+            if not manual:
+                return None
+            return Path(manual).expanduser()
+        return None
+
+    output_fn(f"Detected {len(candidates)} Obsidian vaults:")
+    for i, candidate in enumerate(candidates, 1):
+        output_fn(f"  {i}) {candidate.path}{_format_vault_markers(candidate, current)}")
+    output_fn("  m) Enter a different path manually")
+    output_fn("")
+
+    while True:
+        try:
+            answer = input_fn(f"Select [{default_idx + 1}]: ").strip().lower()
+        except EOFError:
+            return candidates[default_idx].path
+        if answer == "":
+            return candidates[default_idx].path
+        if answer == "m":
+            try:
+                manual = input_fn("Enter Obsidian vault path: ").strip()
+            except EOFError:
+                return None
+            if not manual:
+                continue
+            return Path(manual).expanduser()
+        if answer.isdigit():
+            idx = int(answer) - 1
+            if 0 <= idx < len(candidates):
+                return candidates[idx].path
+        output_fn(f"Invalid choice: {answer}")
+
+
+def existing_config_vault(home: Path) -> Path | None:
+    path = config_path(home)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    value = data.get("vault_dir") if isinstance(data, dict) else None
+    if not isinstance(value, str) or not value:
+        return None
+    return Path(value).expanduser()
+
+
+def resolve_vault_dir(args: argparse.Namespace, home: Path) -> Path | None:
+    if args.vault:
+        return Path(args.vault).expanduser()
+
+    env_vault = os.environ.get("AI_CONVO_VAULT")
+    if env_vault:
+        return Path(env_vault).expanduser()
+
+    interactive = sys.stdin.isatty() and not args.dry_run
+    if not interactive and not args.dry_run:
+        print(
+            "No --vault given and stdin is not a TTY.\n"
+            "Re-run with --vault PATH or in an interactive terminal.",
+            file=sys.stderr,
+        )
+        return None
+
+    registry = obsidian_registry_path(home)
+    if not registry.exists():
+        if obsidian_app_installed(home):
+            print(
+                "Obsidian appears to be installed but has not been opened yet.\n"
+                "Open Obsidian once and create or open a vault, then re-run.\n"
+                "Or pass --vault PATH to skip detection.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Obsidian does not appear to be installed.\n"
+                "Install it from https://obsidian.md and open a vault, then re-run.\n"
+                "Or pass --vault PATH to skip detection.",
+                file=sys.stderr,
+            )
+        return None
+
+    candidates = read_obsidian_vaults(registry)
+    if not candidates:
+        print(
+            "No Obsidian vaults found in registry.\n"
+            "Create or open a vault in Obsidian, then re-run.\n"
+            "Or pass --vault PATH to skip detection.",
+            file=sys.stderr,
+        )
+        return None
+
+    current = existing_config_vault(home)
+
+    if args.dry_run:
+        if current is not None:
+            for candidate in candidates:
+                if candidate.path == current:
+                    return candidate.path
+        return candidates[0].path
+
+    chosen = select_vault(candidates, current=current)
+    if chosen is None:
+        print("Aborted: no vault selected.", file=sys.stderr)
+        return None
+    return chosen
+
+
 def install_config(args: argparse.Namespace) -> int:
     home = Path(args.home).expanduser() if args.home else Path.home()
-    vault_dir = Path(args.vault).expanduser() if args.vault else default_vault_dir(home)
+    vault_dir = resolve_vault_dir(args, home)
+    if vault_dir is None:
+        return 2
     command = args.command or "$HOME/.local/bin/ai-convo-exporter hook"
     config = ExportConfig(
         vault_dir=vault_dir,

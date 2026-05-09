@@ -63,10 +63,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$vault_dir" ]]; then
-  vault_dir="$home_dir/Documents/obsidian"
-fi
-
 bin_dir="$home_dir/.local/bin"
 bin_path="$bin_dir/ai-convo-exporter"
 hook_command="\$HOME/.local/bin/ai-convo-exporter hook"
@@ -77,11 +73,16 @@ if [[ ! -f "$cli_path" ]]; then
   exit 1
 fi
 
+vault_args=()
+if [[ -n "$vault_dir" ]]; then
+  vault_args=(--vault "$vault_dir")
+fi
+
 if [[ "$dry_run" -eq 1 ]]; then
   echo "Would install command: $bin_path -> $cli_path"
   /usr/bin/env python3 "$cli_path" install-config \
     --home "$home_dir" \
-    --vault "$vault_dir" \
+    "${vault_args[@]}" \
     --timezone "$timezone_name" \
     --conversations-dir "$conversations_dir" \
     --command "$hook_command" \
@@ -98,7 +99,7 @@ chmod +x "$bin_path"
 
 /usr/bin/env python3 "$cli_path" install-config \
   --home "$home_dir" \
-  --vault "$vault_dir" \
+  "${vault_args[@]}" \
   --timezone "$timezone_name" \
   --conversations-dir "$conversations_dir" \
   --command "$hook_command"
@@ -108,10 +109,8 @@ if [[ "$backfill" -eq 1 ]]; then
 fi
 
 cat <<EOF
-Installed ai-convo-exporter.
 
 Command: $bin_path
-Vault: $vault_dir
 
 Make sure $bin_dir is in PATH if you want to run ai-convo-exporter directly.
 EOF

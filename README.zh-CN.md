@@ -36,7 +36,15 @@
 ./install.sh
 ```
 
-指定 Obsidian vault：
+不传 `--vault` 时，安装脚本会读取 Obsidian 的 vault 注册表
+（macOS：`~/Library/Application Support/obsidian/obsidian.json`，
+Linux：`~/.config/obsidian/obsidian.json`），并交互式让你选择：
+
+- 只有一个 vault → 显示路径并 `[Y/n]` 确认。
+- 多个 vault → 按"当前打开"和"最近使用"排序后编号列出，输入 `m` 可手动输入其它路径。
+- Obsidian 没装或从未打开过 → 提示安装/打开 Obsidian 后退出，不做任何修改。
+
+显式指定 vault（跳过检测，可在非交互/CI 环境使用）：
 
 ```bash
 ./install.sh --vault "$HOME/Documents/obsidian"
@@ -63,7 +71,7 @@
 - 在 `~/.codex/config.toml` 中通过 `[features] hooks = true` 启用 Codex hooks。
 - 把 Obsidian vault 加入 Codex 的 `sandbox_workspace_write.writable_roots`，让 hook 在 workspace-write 模式下也能写入笔记。
 
-安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。
+安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。重复执行且不传 `--vault` 时，上次配置的 vault 会在选择列表中标记 `[current]` 并作为默认选项。
 
 ## 命令
 

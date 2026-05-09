@@ -6,12 +6,15 @@ from unittest.mock import patch
 
 from ai_convo_exporter.cli import (
     ExportConfig,
+    VaultCandidate,
     ascii_slug,
     default_vault_dir,
     export_transcript,
     merge_claude_settings,
     merge_codex_config_toml,
     merge_codex_hooks,
+    read_obsidian_vaults,
+    select_vault,
 )
 
 
@@ -331,6 +334,130 @@ class ExporterTests(unittest.TestCase):
         self.assertIn("[sandbox_workspace_write]", config_toml_again)
         self.assertIn('"/tmp/existing"', config_toml_again)
         self.assertEqual(config_toml_again.count('"/Users/me/Obsidian Vault"'), 1)
+
+
+class ObsidianDetectionTests(unittest.TestCase):
+    def test_read_obsidian_vaults_filters_stale_and_sorts_by_open_then_recent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing_a = root / "Vault A"
+            existing_b = root / "Vault B"
+            existing_c = root / "Vault C"
+            for d in (existing_a, existing_b, existing_c):
+                d.mkdir()
+
+            registry = root / "obsidian.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "vaults": {
+                            "id-a": {"path": str(existing_a), "ts": 1000, "open": False},
+                            "id-b": {"path": str(existing_b), "ts": 2000, "open": True},
+                            "id-c": {"path": str(existing_c), "ts": 3000, "open": False},
+                            "id-stale": {
+                                "path": str(root / "no-such-dir"),
+                                "ts": 9999,
+                                "open": True,
+                            },
+                            "id-bad": {"path": "", "ts": 1},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            vaults = read_obsidian_vaults(registry)
+            self.assertEqual([v.path for v in vaults], [existing_b, existing_c, existing_a])
+            self.assertTrue(vaults[0].open)
+            self.assertEqual(vaults[1].ts, 3000)
+
+    def test_read_obsidian_vaults_returns_empty_for_missing_or_bad_registry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(read_obsidian_vaults(root / "missing.json"), [])
+
+            broken = root / "broken.json"
+            broken.write_text("not json", encoding="utf-8")
+            self.assertEqual(read_obsidian_vaults(broken), [])
+
+            wrong_shape = root / "wrong.json"
+            wrong_shape.write_text(json.dumps({"vaults": "nope"}), encoding="utf-8")
+            self.assertEqual(read_obsidian_vaults(wrong_shape), [])
+
+    def test_select_vault_single_yes_returns_path(self):
+        candidate = VaultCandidate(path=Path("/v"), open=True, ts=1)
+        captured: list[str] = []
+        result = select_vault(
+            [candidate],
+            input_fn=lambda prompt="": captured.append(prompt) or "",
+            output_fn=lambda *_: None,
+        )
+        self.assertEqual(result, Path("/v"))
+        self.assertTrue(any("Use this vault?" in c for c in captured))
+
+    def test_select_vault_single_no_returns_none(self):
+        candidate = VaultCandidate(path=Path("/v"))
+        result = select_vault(
+            [candidate],
+            input_fn=lambda prompt="": "n",
+            output_fn=lambda *_: None,
+        )
+        self.assertIsNone(result)
+
+    def test_select_vault_single_manual_entry(self):
+        candidate = VaultCandidate(path=Path("/v"))
+        answers = iter(["m", "/custom/path"])
+        result = select_vault(
+            [candidate],
+            input_fn=lambda prompt="": next(answers),
+            output_fn=lambda *_: None,
+        )
+        self.assertEqual(result, Path("/custom/path"))
+
+    def test_select_vault_multi_default_picks_current(self):
+        a = VaultCandidate(path=Path("/a"), open=True, ts=10)
+        b = VaultCandidate(path=Path("/b"), ts=5)
+        result = select_vault(
+            [a, b],
+            current=Path("/b"),
+            input_fn=lambda prompt="": "",
+            output_fn=lambda *_: None,
+        )
+        self.assertEqual(result, Path("/b"))
+
+    def test_select_vault_multi_pick_by_number(self):
+        a = VaultCandidate(path=Path("/a"), open=True)
+        b = VaultCandidate(path=Path("/b"))
+        result = select_vault(
+            [a, b],
+            input_fn=lambda prompt="": "2",
+            output_fn=lambda *_: None,
+        )
+        self.assertEqual(result, Path("/b"))
+
+    def test_select_vault_multi_manual_entry(self):
+        a = VaultCandidate(path=Path("/a"))
+        b = VaultCandidate(path=Path("/b"))
+        answers = iter(["m", "/custom/path"])
+        result = select_vault(
+            [a, b],
+            input_fn=lambda prompt="": next(answers),
+            output_fn=lambda *_: None,
+        )
+        self.assertEqual(result, Path("/custom/path"))
+
+    def test_select_vault_invalid_then_valid(self):
+        a = VaultCandidate(path=Path("/a"))
+        b = VaultCandidate(path=Path("/b"))
+        answers = iter(["bogus", "9", "1"])
+        warnings: list[str] = []
+        result = select_vault(
+            [a, b],
+            input_fn=lambda prompt="": next(answers),
+            output_fn=lambda *args, **_: warnings.extend(args),
+        )
+        self.assertEqual(result, Path("/a"))
+        self.assertTrue(any("Invalid choice" in w for w in warnings))
 
 
 if __name__ == "__main__":
