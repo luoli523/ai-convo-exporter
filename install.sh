@@ -6,7 +6,9 @@ usage() {
 Usage: ./install.sh [options]
 
 Options:
-  --vault PATH          Obsidian vault path. Defaults to AI_CONVO_VAULT or ~/Documents/obsidian.
+  --vault PATH          Obsidian vault path. If omitted, the installer reads
+                        Obsidian's vault registry and prompts (or reads
+                        AI_CONVO_VAULT if set).
   --home PATH           Home directory to configure. Useful for tests.
   --timezone NAME       IANA timezone for note timestamps. Default: Asia/Singapore.
   --conversations-dir NAME
@@ -67,10 +69,27 @@ bin_dir="$home_dir/.local/bin"
 bin_path="$bin_dir/ai-convo-exporter"
 hook_command="\$HOME/.local/bin/ai-convo-exporter hook"
 cli_path="$repo_dir/src/ai_convo_exporter/cli.py"
+wrapper_marker="# ai-convo-exporter source-install wrapper"
 
 if [[ ! -f "$cli_path" ]]; then
   echo "Cannot find CLI at $cli_path" >&2
   exit 1
+fi
+
+# Detect whether ai-convo-exporter is already on PATH from another install
+# (e.g. pipx). If so, don't overwrite that with our bash wrapper. Recognize
+# our own wrapper by either the explicit marker or, for legacy installs,
+# by the cli.py path pattern.
+existing_command="$(command -v ai-convo-exporter 2>/dev/null || true)"
+use_external_command=0
+if [[ -n "$existing_command" ]]; then
+  if grep -qF "$wrapper_marker" "$existing_command" 2>/dev/null; then
+    use_external_command=0
+  elif grep -qF "ai_convo_exporter/cli.py" "$existing_command" 2>/dev/null; then
+    use_external_command=0
+  else
+    use_external_command=1
+  fi
 fi
 
 vault_args=()
@@ -79,8 +98,12 @@ if [[ -n "$vault_dir" ]]; then
 fi
 
 if [[ "$dry_run" -eq 1 ]]; then
-  echo "Would install command: $bin_path -> $cli_path"
-  /usr/bin/env python3 "$cli_path" install-config \
+  if [[ "$use_external_command" -eq 1 ]]; then
+    echo "Would keep existing command: $existing_command"
+  else
+    echo "Would install command: $bin_path -> $cli_path"
+  fi
+  /usr/bin/env python3 "$cli_path" setup \
     --home "$home_dir" \
     "${vault_args[@]}" \
     --timezone "$timezone_name" \
@@ -90,14 +113,20 @@ if [[ "$dry_run" -eq 1 ]]; then
   exit 0
 fi
 
-mkdir -p "$bin_dir"
-{
-  echo '#!/usr/bin/env bash'
-  printf 'exec /usr/bin/env python3 %q "$@"\n' "$cli_path"
-} > "$bin_path"
-chmod +x "$bin_path"
+if [[ "$use_external_command" -eq 1 ]]; then
+  echo "Detected existing ai-convo-exporter at $existing_command"
+  echo "Skipping bash wrapper creation; will configure hooks against it."
+else
+  mkdir -p "$bin_dir"
+  {
+    echo '#!/usr/bin/env bash'
+    echo "$wrapper_marker"
+    printf 'exec /usr/bin/env python3 %q "$@"\n' "$cli_path"
+  } > "$bin_path"
+  chmod +x "$bin_path"
+fi
 
-/usr/bin/env python3 "$cli_path" install-config \
+/usr/bin/env python3 "$cli_path" setup \
   --home "$home_dir" \
   "${vault_args[@]}" \
   --timezone "$timezone_name" \
@@ -105,12 +134,23 @@ chmod +x "$bin_path"
   --command "$hook_command"
 
 if [[ "$backfill" -eq 1 ]]; then
-  "$bin_path" backfill --home "$home_dir"
+  if [[ "$use_external_command" -eq 1 ]]; then
+    "$existing_command" backfill --home "$home_dir"
+  else
+    "$bin_path" backfill --home "$home_dir"
+  fi
 fi
 
-cat <<EOF
+if [[ "$use_external_command" -eq 1 ]]; then
+  cat <<EOF
+
+Command: $existing_command (existing)
+EOF
+else
+  cat <<EOF
 
 Command: $bin_path
 
 Make sure $bin_dir is in PATH if you want to run ai-convo-exporter directly.
 EOF
+fi

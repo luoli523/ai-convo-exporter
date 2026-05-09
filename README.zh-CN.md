@@ -30,48 +30,67 @@
 
 ## 安装
 
-在新 checkout 后直接执行：
+### 推荐：pipx（无需 clone）
 
 ```bash
+pipx install git+https://github.com/luoli523/ai-convo-exporter
+ai-convo-exporter setup
+```
+
+`pipx` 会把 `ai-convo-exporter` 装进独立的 venv 并放进 PATH。
+`setup` 会自动检测 Obsidian vault、写入 `~/.config/ai-convo-exporter/config.json`，
+并为 Codex 和 Claude Code 注册 Stop hook。
+
+卸载：`pipx uninstall ai-convo-exporter`。
+
+### 备选：pip --user
+
+```bash
+pip install --user git+https://github.com/luoli523/ai-convo-exporter
+ai-convo-exporter setup
+```
+
+（Homebrew Python 上可能撞 PEP 668，建议优先用 pipx。）
+
+### 源码安装 / 开发用
+
+```bash
+git clone https://github.com/luoli523/ai-convo-exporter
+cd ai-convo-exporter
 ./install.sh
 ```
 
-不传 `--vault` 时，安装脚本会读取 Obsidian 的 vault 注册表
-（macOS：`~/Library/Application Support/obsidian/obsidian.json`，
-Linux：`~/.config/obsidian/obsidian.json`），并交互式让你选择：
+`./install.sh` 会在 `~/.local/bin/ai-convo-exporter` 创建一个 bash 包装器
+指向当前 checkout，然后执行 `setup`。如果 PATH 中已经存在 `ai-convo-exporter`
+（例如先前用 pipx 装过），脚本会跳过包装器创建，避免覆盖已有命令。
 
-- 只有一个 vault → 显示路径并 `[Y/n]` 确认。
-- 多个 vault → 按"当前打开"和"最近使用"排序后编号列出，输入 `m` 可手动输入其它路径。
+### Setup 选项
+
+`setup`（以及 `./install.sh`）支持相同的参数：
+
+```bash
+ai-convo-exporter setup --vault "$HOME/Documents/obsidian"   # 跳过检测
+ai-convo-exporter setup --dry-run                            # 仅预览
+./install.sh --backfill                                      # 顺便补导历史
+```
+
+不传 `--vault` 时，`setup` 会读取 Obsidian 的 vault 注册表
+（macOS：`~/Library/Application Support/obsidian/obsidian.json`，
+Linux：`~/.config/obsidian/obsidian.json`）并交互式让你选择：
+
+- 只有一个 vault → `[Y/n/m]` 确认（`m` 进入手动输入路径）。
+- 多个 vault → 按"当前打开"和"最近使用"排序后编号列出，输入 `m` 手动输入路径。
 - Obsidian 没装或从未打开过 → 提示安装/打开 Obsidian 后退出，不做任何修改。
 
-显式指定 vault（跳过检测，可在非交互/CI 环境使用）：
+`setup` 是幂等的。Hook 配置就地更新，不会重复追加。重复执行且不传 `--vault` 时，上次配置的 vault 会在选择列表中标记 `[current]` 并作为默认选项。
 
-```bash
-./install.sh --vault "$HOME/Documents/obsidian"
-```
+`setup` 会写入：
 
-安装并导入本机历史 transcript：
-
-```bash
-./install.sh --backfill
-```
-
-只预览将要修改的内容，不写入配置：
-
-```bash
-./install.sh --dry-run
-```
-
-安装脚本会做这些事：
-
-- 创建 `~/.config/ai-convo-exporter/config.json`。
-- 在 `~/.local/bin/ai-convo-exporter` 安装命令包装器。
-- 向 `~/.claude/settings.json` 添加 Claude Code `Stop` hook。
-- 向 `~/.codex/hooks.json` 添加 Codex `Stop` hook。
-- 在 `~/.codex/config.toml` 中通过 `[features] hooks = true` 启用 Codex hooks。
-- 把 Obsidian vault 加入 Codex 的 `sandbox_workspace_write.writable_roots`，让 hook 在 workspace-write 模式下也能写入笔记。
-
-安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。重复执行且不传 `--vault` 时，上次配置的 vault 会在选择列表中标记 `[current]` 并作为默认选项。
+- `~/.config/ai-convo-exporter/config.json`
+- `~/.claude/settings.json` 中的 Claude Code `Stop` hook
+- `~/.codex/hooks.json` 中的 Codex `Stop` hook
+- `~/.codex/config.toml` 中的 `[features] hooks = true`
+- 把 vault 路径加入 Codex 的 `sandbox_workspace_write.writable_roots`，让 hook 在 workspace-write 模式下也能写入。
 
 ## 命令
 

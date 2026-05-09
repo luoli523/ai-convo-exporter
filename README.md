@@ -30,48 +30,72 @@ Project folders use the short project name. When a checkout has a git remote, th
 
 ## Install
 
-From a fresh checkout:
+### Recommended: pipx (no clone needed)
 
 ```bash
+pipx install git+https://github.com/luoli523/ai-convo-exporter
+ai-convo-exporter setup
+```
+
+`pipx` puts `ai-convo-exporter` on your PATH in an isolated venv. `setup`
+detects your Obsidian vault, writes `~/.config/ai-convo-exporter/config.json`,
+and installs Stop hooks for both Codex and Claude Code.
+
+To remove later: `pipx uninstall ai-convo-exporter`.
+
+### Alternative: pip --user
+
+```bash
+pip install --user git+https://github.com/luoli523/ai-convo-exporter
+ai-convo-exporter setup
+```
+
+(On Homebrew Python you may hit PEP 668; prefer pipx.)
+
+### From source / for development
+
+```bash
+git clone https://github.com/luoli523/ai-convo-exporter
+cd ai-convo-exporter
 ./install.sh
 ```
 
-Without `--vault`, the installer reads Obsidian's vault registry
+`./install.sh` creates a bash wrapper at `~/.local/bin/ai-convo-exporter`
+pointing at this checkout, then runs `setup`. If `ai-convo-exporter` is
+already on PATH (e.g., from a prior pipx install), the wrapper step is
+skipped so we don't clobber it.
+
+### Setup options
+
+`setup` (and `./install.sh`) accept the same options:
+
+```bash
+ai-convo-exporter setup --vault "$HOME/Documents/obsidian"   # skip detection
+ai-convo-exporter setup --dry-run                            # preview only
+./install.sh --backfill                                      # also import history
+```
+
+Without `--vault`, `setup` reads Obsidian's vault registry
 (`~/Library/Application Support/obsidian/obsidian.json` on macOS,
-`~/.config/obsidian/obsidian.json` on Linux) and prompts you to pick one.
-If exactly one vault exists it is offered with `[Y/n]`. If multiple vaults
-exist they are listed by recency (currently open first), with `m` to enter
-a path manually. If Obsidian is not installed or has never been opened,
-the installer exits with instructions and does nothing.
+`~/.config/obsidian/obsidian.json` on Linux) and prompts:
 
-With an explicit vault (skips detection, works non-interactively):
+- One vault → `[Y/n/m]` (m enters a manual path).
+- Multiple vaults → numbered list, currently open first, `m` for manual.
+- If Obsidian is not installed or has never been opened, `setup` exits
+  with instructions and writes nothing.
 
-```bash
-./install.sh --vault "$HOME/Documents/obsidian"
-```
+`setup` is idempotent. Hook entries are merged in place rather than
+appended. Re-running without `--vault` marks the previously configured
+vault as `[current]` and selects it by default.
 
-Install and import historical local transcripts:
+What `setup` writes:
 
-```bash
-./install.sh --backfill
-```
-
-Dry-run without writing config:
-
-```bash
-./install.sh --dry-run
-```
-
-The installer:
-
-- Creates `~/.config/ai-convo-exporter/config.json`.
-- Installs a wrapper at `~/.local/bin/ai-convo-exporter`.
-- Adds a Claude Code `Stop` hook to `~/.claude/settings.json`.
-- Adds a Codex `Stop` hook to `~/.codex/hooks.json`.
-- Enables Codex hooks with `[features] hooks = true` in `~/.codex/config.toml`.
-- Adds the Obsidian vault to Codex `sandbox_workspace_write.writable_roots` so the hook can write notes while Codex runs in workspace-write mode.
-
-Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates. When re-run without `--vault`, the previously configured vault is marked `[current]` in the prompt and selected by default.
+- `~/.config/ai-convo-exporter/config.json`
+- A Claude Code `Stop` hook in `~/.claude/settings.json`
+- A Codex `Stop` hook in `~/.codex/hooks.json`
+- `[features] hooks = true` in `~/.codex/config.toml`
+- The vault path under Codex `sandbox_workspace_write.writable_roots`
+  so the hook can write notes while Codex runs in workspace-write mode.
 
 ## Commands
 

@@ -1052,15 +1052,19 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--home")
     backfill.set_defaults(func=command_scan)
 
-    install = subparsers.add_parser("install-config", help="Write local config and hooks")
-    install.add_argument("--vault")
-    install.add_argument("--home")
-    install.add_argument("--command")
-    install.add_argument("--conversations-dir", default=DEFAULT_CONVERSATIONS_DIR)
-    install.add_argument("--timezone", default=DEFAULT_TIMEZONE)
-    install.add_argument("--machine")
-    install.add_argument("--dry-run", action="store_true")
-    install.set_defaults(func=install_config)
+    setup = subparsers.add_parser(
+        "setup",
+        aliases=["install-config"],
+        help="Detect Obsidian vault, write config, install Codex/Claude Code hooks",
+    )
+    setup.add_argument("--vault")
+    setup.add_argument("--home")
+    setup.add_argument("--command")
+    setup.add_argument("--conversations-dir", default=DEFAULT_CONVERSATIONS_DIR)
+    setup.add_argument("--timezone", default=DEFAULT_TIMEZONE)
+    setup.add_argument("--machine")
+    setup.add_argument("--dry-run", action="store_true")
+    setup.set_defaults(func=install_config)
 
     doctor = subparsers.add_parser("doctor", help="Show active config and expected files")
     doctor.add_argument("--home")
