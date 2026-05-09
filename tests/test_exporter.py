@@ -11,12 +11,14 @@ from ai_convo_exporter.cli import (
     Transcript,
     ascii_slug,
     default_vault_dir,
+    export_parsed_transcript,
     export_transcript,
     load_config,
     merge_claude_settings,
     merge_codex_config_toml,
     merge_codex_hooks,
     should_export_from_hook,
+    transcript_for_hook_export,
 )
 
 
@@ -54,6 +56,155 @@ class ExporterTests(unittest.TestCase):
         config = ExportConfig(vault_dir=Path("/tmp/vault"))
 
         self.assertFalse(should_export_from_hook(transcript, config))
+
+    def test_manual_hook_policy_exports_latest_assistant_before_save_trigger(self):
+        transcript = Transcript(
+            provider="codex",
+            session_id="session-1",
+            messages=[
+                Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                Message(role="assistant", text="Important answer", timestamp="2026-05-08T01:01:00.000Z"),
+                Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                Message(role="assistant", text="Save acknowledged", timestamp="2026-05-08T01:03:00.000Z"),
+            ],
+            created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+            updated=datetime.fromisoformat("2026-05-08T01:03:00+00:00"),
+            title="Explain the change",
+        )
+        config = ExportConfig(vault_dir=Path("/tmp/vault"))
+
+        selected = transcript_for_hook_export(transcript, config)
+
+        self.assertIsNotNone(selected)
+        assert selected is not None
+        self.assertEqual([message.text for message in selected.messages], ["Explain the change", "Important answer"])
+        self.assertEqual(selected.created, datetime.fromisoformat("2026-05-08T01:00:00+00:00"))
+        self.assertEqual(selected.updated, datetime.fromisoformat("2026-05-08T01:01:00+00:00"))
+        self.assertTrue(selected.append_same_session)
+
+    def test_manual_hook_export_writes_selected_question_answer_pair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript_path = root / "codex.jsonl"
+            transcript_path.write_text("{}\n", encoding="utf-8")
+            transcript = Transcript(
+                provider="codex",
+                session_id="session-1",
+                messages=[
+                    Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                    Message(role="assistant", text="Important answer", timestamp="2026-05-08T01:01:00.000Z"),
+                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                    Message(role="assistant", text="Save acknowledged", timestamp="2026-05-08T01:03:00.000Z"),
+                ],
+                created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:03:00+00:00"),
+                cwd=str(project),
+                title="Explain the change",
+            )
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            selected = transcript_for_hook_export(transcript, config)
+            assert selected is not None
+
+            result = export_parsed_transcript(selected, transcript_path, config)
+            markdown = result.markdown_path.read_text(encoding="utf-8")
+
+            self.assertIn("## Explain the change", markdown)
+            self.assertIn("### Answer", markdown)
+            self.assertIn("Important answer", markdown)
+            self.assertNotIn("## User", markdown)
+            self.assertNotIn("## Assistant", markdown)
+            self.assertNotIn("#save-chat", markdown)
+            self.assertNotIn("Save acknowledged", markdown)
+
+    def test_manual_hook_export_appends_to_one_file_per_session_and_renames_by_date(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript_path = root / "codex.jsonl"
+            transcript_path.write_text("{}\n", encoding="utf-8")
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+
+            first = Transcript(
+                provider="codex",
+                session_id="session-1",
+                messages=[
+                    Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                    Message(role="assistant", text="First saved answer", timestamp="2026-05-08T01:01:00.000Z"),
+                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                ],
+                created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:02:00+00:00"),
+                cwd=str(project),
+                title="Explain the change",
+            )
+            first_selected = transcript_for_hook_export(first, config)
+            assert first_selected is not None
+            first_result = export_parsed_transcript(first_selected, transcript_path, config)
+
+            second = Transcript(
+                provider="codex",
+                session_id="session-1",
+                messages=[
+                    Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                    Message(role="assistant", text="First saved answer", timestamp="2026-05-08T01:01:00.000Z"),
+                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                    Message(role="assistant", text="Second saved answer", timestamp="2026-05-09T01:01:00.000Z"),
+                    Message(role="user", text="#save-chat", timestamp="2026-05-09T01:02:00.000Z"),
+                ],
+                created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-09T01:02:00+00:00"),
+                cwd=str(project),
+                title="Explain the change",
+            )
+            second_selected = transcript_for_hook_export(second, config)
+            assert second_selected is not None
+            second_result = export_parsed_transcript(second_selected, transcript_path, config)
+
+            self.assertEqual(first_result.markdown_path.name, "20260508-codex-explain-the-change.md")
+            self.assertFalse(first_result.markdown_path.exists())
+            self.assertEqual(second_result.markdown_path.name, "20260509-codex-explain-the-change.md")
+            self.assertTrue(second_result.markdown_path.exists())
+            session_files = list(second_result.markdown_path.parent.glob("*.md"))
+            self.assertEqual(session_files, [second_result.markdown_path])
+
+            markdown = second_result.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("First saved answer", markdown)
+            self.assertIn("Second saved answer", markdown)
+            self.assertNotIn("#save-chat", markdown)
+
+    def test_manual_hook_export_does_not_append_same_reply_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript_path = root / "codex.jsonl"
+            transcript_path.write_text("{}\n", encoding="utf-8")
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            transcript = Transcript(
+                provider="codex",
+                session_id="session-1",
+                messages=[
+                    Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                    Message(role="assistant", text="Only save once", timestamp="2026-05-08T01:01:00.000Z"),
+                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                ],
+                created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:02:00+00:00"),
+                cwd=str(project),
+                title="Explain the change",
+            )
+            selected = transcript_for_hook_export(transcript, config)
+            assert selected is not None
+
+            first_result = export_parsed_transcript(selected, transcript_path, config)
+            second_result = export_parsed_transcript(selected, transcript_path, config)
+            markdown = second_result.markdown_path.read_text(encoding="utf-8")
+
+            self.assertEqual(first_result.markdown_path, second_result.markdown_path)
+            self.assertEqual(markdown.count("Only save once"), 1)
 
     def test_exports_codex_transcript_by_stable_git_project(self):
         with tempfile.TemporaryDirectory() as tmp:

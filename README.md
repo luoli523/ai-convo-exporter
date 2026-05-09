@@ -65,7 +65,7 @@ The installer:
 
 Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates.
 
-By default, hooks use manual save mode. A conversation is exported only when a user message contains `#save-chat` on its own line. Add `#nosave` to skip saving even when a save trigger is present. Manual `export`, `scan`, and `backfill` commands still export transcripts directly.
+By default, hooks use manual save mode. When a user message contains `#save-chat` on its own line, the hook exports the latest question-and-answer pair before that save marker. Each saved pair is rendered with the question as the `##` heading and the assistant reply under `### Answer`, so folded notes still show the question. Repeated saves append to the same session note; if the latest saved reply changes the `YYYYMMDD` date, the note is renamed instead of duplicated. Add `#nosave` to skip saving even when a save trigger is present. Manual `export`, `scan`, and `backfill` commands still export full transcripts directly.
 
 ## Commands
 

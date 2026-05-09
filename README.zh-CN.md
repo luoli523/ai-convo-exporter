@@ -65,7 +65,7 @@
 
 安装是幂等的。重复执行 `./install.sh` 会更新同一份 hook 配置，不会重复追加多份 hook。
 
-默认情况下，hook 使用手动保存模式。只有当用户消息中有单独一行 `#save-chat` 时，当前对话才会被导出。加入 `#nosave` 可以阻止保存，即使对话里同时有保存触发词。手动运行 `export`、`scan`、`backfill` 时仍会直接导出 transcript，不受 hook 策略影响。
+默认情况下，hook 使用手动保存模式。当用户消息中有单独一行 `#save-chat` 时，hook 会导出这个保存标记之前最近一组问答。每组问答会以问题作为 `##` 标题，assistant 回复放在 `### Answer` 下，这样折叠后仍能看到问题。重复保存会 append 到同一个 session 笔记；如果最新保存的回复让 `YYYYMMDD` 日期发生变化，只会重命名这份笔记，不会生成第二份。加入 `#nosave` 可以阻止保存，即使对话里同时有保存触发词。手动运行 `export`、`scan`、`backfill` 时仍会直接导出完整 transcript，不受 hook 策略影响。
 
 ## 命令
 

@@ -67,6 +67,8 @@ class Transcript:
     git_repo: str = ""
     git_branch: str = ""
     title: str = ""
+    replace_same_session: bool = True
+    append_same_session: bool = False
 
 
 @dataclass
@@ -219,13 +221,69 @@ def user_has_trigger(transcript: Transcript, triggers: list[str]) -> bool:
 
 
 def should_export_from_hook(transcript: Transcript, config: ExportConfig) -> bool:
+    return transcript_for_hook_export(transcript, config) is not None
+
+
+def message_time(message: Message, fallback: datetime) -> datetime:
+    return parse_time(message.timestamp) or fallback
+
+
+def latest_user_trigger_index(transcript: Transcript, triggers: list[str]) -> int | None:
+    for index in range(len(transcript.messages) - 1, -1, -1):
+        message = transcript.messages[index]
+        if message.role == "user" and trigger_in_text(message.text, triggers):
+            return index
+    return None
+
+
+def transcript_for_hook_export(transcript: Transcript, config: ExportConfig) -> Transcript | None:
     if user_has_trigger(transcript, config.skip_triggers):
-        return False
+        return None
     if config.save_policy == "always":
-        return True
-    if config.save_policy == "manual":
-        return user_has_trigger(transcript, config.save_triggers)
-    return False
+        return transcript
+    if config.save_policy != "manual":
+        return None
+
+    trigger_index = latest_user_trigger_index(transcript, config.save_triggers)
+    if trigger_index is None:
+        return None
+
+    messages_before_trigger = transcript.messages[:trigger_index]
+    for assistant_index in range(len(messages_before_trigger) - 1, -1, -1):
+        assistant = messages_before_trigger[assistant_index]
+        if assistant.role != "assistant":
+            continue
+        question = latest_user_question_before(messages_before_trigger, assistant_index, config)
+        messages = [question, assistant] if question else [assistant]
+        created = message_time(question, transcript.created) if question else message_time(assistant, transcript.created)
+        updated = message_time(assistant, transcript.updated)
+        return Transcript(
+            provider=transcript.provider,
+            session_id=transcript.session_id,
+            messages=messages,
+            created=created,
+            updated=updated,
+            cwd=transcript.cwd,
+            git_repo=transcript.git_repo,
+            git_branch=transcript.git_branch,
+            title=transcript.title,
+            append_same_session=True,
+        )
+    return None
+
+
+def latest_user_question_before(
+    messages: list[Message],
+    before_index: int,
+    config: ExportConfig,
+) -> Message | None:
+    for message in reversed(messages[:before_index]):
+        if message.role != "user":
+            continue
+        if trigger_in_text(message.text, config.save_triggers + config.skip_triggers):
+            continue
+        return message
+    return None
 
 
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -504,12 +562,70 @@ def render_markdown(
         "",
     ]
 
-    for message in transcript.messages:
-        label = "User" if message.role == "user" else "Assistant"
-        lines.extend([f"## {label}", ""])
-        if message.timestamp:
-            lines.extend([f"> {message.timestamp}", ""])
-        lines.extend([message.text, "", "---", ""])
+    lines.extend(render_message_sections_list(transcript.messages))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def question_heading(question: Message, fallback: str = "Question") -> str:
+    first_line = next((line.strip() for line in question.text.splitlines() if line.strip()), "")
+    return safe_filename(first_line, 88, fallback)
+
+
+def render_question_answer_section(question: Message, answer: Message) -> list[str]:
+    heading = question_heading(question)
+    question_text = question.text.strip()
+    lines = [f"## {heading}", ""]
+    if question.timestamp:
+        lines.extend([f"> User: {question.timestamp}", ""])
+    if question_text and question_text != heading:
+        lines.extend([question_text, ""])
+    lines.extend(["### Answer", ""])
+    if answer.timestamp:
+        lines.extend([f"> Assistant: {answer.timestamp}", ""])
+    lines.extend([answer.text, "", "---", ""])
+    return lines
+
+
+def render_unpaired_user_section(message: Message) -> list[str]:
+    heading = question_heading(message)
+    message_text = message.text.strip()
+    lines = [f"## {heading}", ""]
+    if message.timestamp:
+        lines.extend([f"> User: {message.timestamp}", ""])
+    if message_text and message_text != heading:
+        lines.extend([message_text, ""])
+    lines.extend(["---", ""])
+    return lines
+
+
+def render_unpaired_assistant_section(message: Message) -> list[str]:
+    lines = ["## Assistant", ""]
+    if message.timestamp:
+        lines.extend([f"> Assistant: {message.timestamp}", ""])
+    lines.extend([message.text, "", "---", ""])
+    return lines
+
+
+def render_message_sections_list(messages: list[Message]) -> list[str]:
+    lines: list[str] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        next_message = messages[index + 1] if index + 1 < len(messages) else None
+        if message.role == "user" and next_message and next_message.role == "assistant":
+            lines.extend(render_question_answer_section(message, next_message))
+            index += 2
+            continue
+        if message.role == "user":
+            lines.extend(render_unpaired_user_section(message))
+        elif message.role == "assistant":
+            lines.extend(render_unpaired_assistant_section(message))
+        index += 1
+    return lines
+
+
+def render_message_sections(messages: list[Message]) -> str:
+    lines = render_message_sections_list(messages)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -528,25 +644,70 @@ def write_project_index(project_dir: Path, project: str, project_slug: str, conv
     index_path.write_text(index, encoding="utf-8")
 
 
-def remove_stale_session_notes(sessions_dir: Path, current_path: Path, session_id: str) -> None:
+def session_note_has_id(path: Path, session_id: str) -> bool:
     marker = f"session_id: {session_id}"
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return marker in text
+
+
+def find_session_notes(sessions_dir: Path, session_id: str) -> list[Path]:
+    return sorted(
+        path for path in sessions_dir.glob("*.md") if session_note_has_id(path, session_id)
+    )
+
+
+def remove_stale_session_notes(sessions_dir: Path, current_path: Path, session_id: str) -> None:
     for path in sessions_dir.glob("*.md"):
         if path == current_path:
             continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        if marker in text:
+        if session_note_has_id(path, session_id):
             path.unlink()
 
 
-def export_transcript(provider: str, transcript_path: Path, config: ExportConfig, cwd: str = "") -> ExportResult:
+def update_markdown_updated(markdown: str, updated: datetime, timezone_name: str) -> str:
+    updated_text = to_local(updated, timezone_name).isoformat()
+    return re.sub(r"^updated: .*$", f"updated: {updated_text}", markdown, count=1, flags=re.MULTILINE)
+
+
+def append_to_session_note(
+    sessions_dir: Path,
+    markdown_path: Path,
+    transcript: Transcript,
+    config: ExportConfig,
+) -> Path | None:
+    notes = find_session_notes(sessions_dir, transcript.session_id)
+    existing_path = markdown_path if markdown_path in notes else (notes[-1] if notes else None)
+    if existing_path is None:
+        return None
+    if existing_path != markdown_path:
+        if markdown_path.exists():
+            existing_path.unlink()
+        else:
+            existing_path.rename(markdown_path)
+    existing_markdown = markdown_path.read_text(encoding="utf-8")
+    existing_markdown = update_markdown_updated(existing_markdown, transcript.updated, config.timezone)
+    appended = render_message_sections(transcript.messages)
+    if appended.strip() in existing_markdown:
+        markdown_path.write_text(existing_markdown, encoding="utf-8")
+        remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
+        return markdown_path
+    markdown_path.write_text(existing_markdown.rstrip() + "\n\n" + appended, encoding="utf-8")
+    remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
+    return markdown_path
+
+
+def export_parsed_transcript(
+    transcript: Transcript,
+    transcript_path: Path,
+    config: ExportConfig,
+) -> ExportResult:
     transcript_path = transcript_path.expanduser()
     if not transcript_path.exists():
         raise FileNotFoundError(transcript_path)
 
-    transcript = parse_transcript(provider, transcript_path, cwd)
     if not transcript.messages:
         raise ValueError(f"No exportable messages in {transcript_path}")
 
@@ -569,6 +730,18 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
     filename = f"{local_updated.strftime('%Y%m%d')}-{transcript.provider}-{title}.md"
     markdown_path = sessions_dir / filename
     raw_rel_path = os.path.relpath(raw_path, markdown_path.parent)
+    if transcript.append_same_session:
+        appended_path = append_to_session_note(sessions_dir, markdown_path, transcript, config)
+        if appended_path is not None:
+            write_project_index(project_dir, project, project_slug, config.conversations_dir)
+            return ExportResult(
+                markdown_path=appended_path,
+                raw_path=raw_path,
+                project=project,
+                project_slug=project_slug,
+                session_id=transcript.session_id,
+            )
+
     markdown = render_markdown(
         transcript=transcript,
         config=config,
@@ -579,7 +752,8 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
         raw_rel_path=raw_rel_path,
     )
     markdown_path.write_text(markdown, encoding="utf-8")
-    remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
+    if transcript.replace_same_session:
+        remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
     write_project_index(project_dir, project, project_slug, config.conversations_dir)
     return ExportResult(
         markdown_path=markdown_path,
@@ -588,6 +762,12 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
         project_slug=project_slug,
         session_id=transcript.session_id,
     )
+
+
+def export_transcript(provider: str, transcript_path: Path, config: ExportConfig, cwd: str = "") -> ExportResult:
+    transcript_path = transcript_path.expanduser()
+    transcript = parse_transcript(provider, transcript_path, cwd)
+    return export_parsed_transcript(transcript, transcript_path, config)
 
 
 def infer_provider(path: Path) -> str:
@@ -817,10 +997,11 @@ def command_hook(args: argparse.Namespace) -> int:
         provider = args.provider or infer_provider(transcript_path)
         config = load_config()
         transcript = parse_transcript(provider, transcript_path, cwd=str(payload.get("cwd") or ""))
-        if not should_export_from_hook(transcript, config):
+        export_transcript_value = transcript_for_hook_export(transcript, config)
+        if export_transcript_value is None:
             print(json.dumps(HOOK_STATUS))
             return 0
-        export_transcript(provider, transcript_path, config, cwd=str(payload.get("cwd") or ""))
+        export_parsed_transcript(export_transcript_value, transcript_path, config)
     except Exception as exc:
         status = {
             **HOOK_STATUS,
