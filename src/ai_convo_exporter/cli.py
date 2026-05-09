@@ -252,6 +252,143 @@ def find_decision_snippet(text: str, window: int = 80) -> str | None:
     return snippet
 
 
+def _parse_frontmatter_value(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw[1:-1]
+    return raw
+
+
+def read_frontmatter(path: Path) -> dict[str, Any]:
+    """Minimal YAML frontmatter reader for our own writer's output shape."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return {}
+    block = text[4:end]
+    out: dict[str, Any] = {}
+    current_list: list[str] | None = None
+    for line in block.split("\n"):
+        if not line.strip():
+            current_list = None
+            continue
+        if line.startswith("  - ") and current_list is not None:
+            current_list.append(_parse_frontmatter_value(line[4:]))
+            continue
+        if ":" in line and not line.startswith(" "):
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if not value:
+                current_list = []
+                out[key] = current_list
+            else:
+                out[key] = _parse_frontmatter_value(value)
+                current_list = None
+    return out
+
+
+def compute_session_stats(transcript: Transcript) -> dict[str, int]:
+    discussion = sum(
+        1 for m in transcript.messages if m.role == "assistant" and m.kind == "discussion"
+    )
+    action = sum(
+        1 for m in transcript.messages if m.role == "assistant" and m.kind == "action"
+    )
+    decisions = sum(
+        1 for m in transcript.messages
+        if m.role == "assistant" and find_decision_snippet(m.text) is not None
+    )
+    return {"discussion": discussion, "action": action, "decisions": decisions}
+
+
+def render_daily_entry(
+    note_stem: str,
+    session_id: str,
+    topic: str,
+    stats: dict[str, int],
+) -> str:
+    topic = (topic or "").replace("\n", " ").strip()
+    if len(topic) > 100:
+        topic = topic[:100].rstrip() + "..."
+    counts = f"{stats['discussion']} discussion · {stats['action']} action"
+    if stats.get("decisions"):
+        counts += f" · {stats['decisions']} decisions"
+    body = topic if topic else "(no topic)"
+    return f"- [[{note_stem}]] — {body} ({counts}) <!-- session_id: {session_id} -->"
+
+
+def update_daily_note(daily_path: Path, entry: str, session_id: str, date_str: str) -> None:
+    marker = f"<!-- session_id: {session_id} -->"
+    daily_path.parent.mkdir(parents=True, exist_ok=True)
+    if daily_path.exists():
+        text = daily_path.read_text(encoding="utf-8")
+    else:
+        text = f"# {date_str}\n\n## AI sessions\n"
+
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines):
+        if marker in line:
+            lines[i] = entry
+            daily_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+
+    if "## AI sessions" not in text:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(["## AI sessions", entry])
+    else:
+        section_start = next(
+            i for i, l in enumerate(lines) if l.strip() == "## AI sessions"
+        )
+        end = len(lines)
+        for j in range(section_start + 1, len(lines)):
+            if lines[j].startswith("## "):
+                end = j
+                break
+        while end > section_start + 1 and lines[end - 1].strip() == "":
+            end -= 1
+        lines.insert(end, entry)
+
+    daily_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def find_related_sessions(
+    sessions_dir: Path,
+    current_session_id: str,
+    current_files: list[str],
+    max_results: int = 5,
+) -> list[tuple[str, int]]:
+    """Return [(note_stem, overlap_count)] for sessions sharing files."""
+    file_set = set(current_files)
+    if not file_set or not sessions_dir.exists():
+        return []
+    candidates: list[tuple[str, int]] = []
+    for path in sessions_dir.glob("*.md"):
+        fm = read_frontmatter(path)
+        if not fm:
+            continue
+        if fm.get("session_id") == current_session_id:
+            continue
+        other = fm.get("related_files") or []
+        if not isinstance(other, list):
+            continue
+        overlap = len(file_set & set(str(x) for x in other))
+        if overlap > 0:
+            candidates.append((path.stem, overlap))
+    candidates.sort(key=lambda c: (-c[1], c[0]))
+    return candidates[:max_results]
+
+
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -612,6 +749,7 @@ def render_markdown(
     git_repo: str,
     git_branch: str,
     raw_rel_path: str,
+    related_sessions: list[tuple[str, int]] | None = None,
 ) -> str:
     created = to_local(transcript.created, config.timezone).isoformat()
     updated = to_local(transcript.updated, config.timezone).isoformat()
@@ -645,6 +783,10 @@ def render_markdown(
         lines.append("related_files:")
         for path in related_files:
             lines.append(f"  - {yaml_value(path)}")
+    if related_sessions:
+        lines.append("related_sessions:")
+        for stem, _ in related_sessions:
+            lines.append(f'  - "[[{stem}]]"')
     discussion_count = sum(
         1 for m in transcript.messages if m.role == "assistant" and m.kind == "discussion"
     )
@@ -686,6 +828,12 @@ def render_markdown(
 
     for message in transcript.messages:
         lines.extend(render_message(message))
+    if related_sessions:
+        lines.extend(["## Related sessions", ""])
+        for stem, overlap in related_sessions:
+            label = "shared file" if overlap == 1 else "shared files"
+            lines.append(f"- [[{stem}]] ({overlap} {label})")
+        lines.extend(["", "---", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -806,6 +954,10 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
     filename = f"{local_updated.strftime('%Y%m%d')}-{transcript.provider}-{title}.md"
     markdown_path = sessions_dir / filename
     raw_rel_path = os.path.relpath(raw_path, markdown_path.parent)
+    related_files = relativize_to_cwd(transcript.tool_usage.files, transcript.cwd)
+    related_sessions = find_related_sessions(
+        sessions_dir, transcript.session_id, related_files
+    )
     markdown = render_markdown(
         transcript=transcript,
         config=config,
@@ -814,10 +966,23 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
         git_repo=git_repo,
         git_branch=git_branch,
         raw_rel_path=raw_rel_path,
+        related_sessions=related_sessions,
     )
     markdown_path.write_text(markdown, encoding="utf-8")
     remove_stale_session_notes(sessions_dir, markdown_path, transcript.session_id)
     write_project_index(project_dir, project, project_slug, config.conversations_dir)
+
+    daily_dir = config.vault_dir / config.conversations_dir / "Daily"
+    daily_path = daily_dir / f"{local_updated.strftime('%Y-%m-%d')}.md"
+    stats = compute_session_stats(transcript)
+    topic = transcript.title or next(
+        (m.text for m in transcript.messages if m.role == "user"), ""
+    )
+    entry = render_daily_entry(markdown_path.stem, transcript.session_id, topic, stats)
+    update_daily_note(
+        daily_path, entry, transcript.session_id, local_updated.strftime("%Y-%m-%d")
+    )
+
     return ExportResult(
         markdown_path=markdown_path,
         raw_path=raw_path,

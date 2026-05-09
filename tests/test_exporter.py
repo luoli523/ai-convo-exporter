@@ -12,11 +12,15 @@ from ai_convo_exporter.cli import (
     extract_claude_tool_usage,
     extract_codex_tool_usage,
     find_decision_snippet,
+    find_related_sessions,
     merge_claude_settings,
     merge_codex_config_toml,
     merge_codex_hooks,
+    read_frontmatter,
     relativize_to_cwd,
+    render_daily_entry,
     title_slug,
+    update_daily_note,
 )
 
 
@@ -583,6 +587,173 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("**Decisions flagged**: 1", md)
             self.assertIn("> [!decision]+ Decision", md)
             self.assertIn("我建议", md)
+
+    def test_read_frontmatter_parses_scalars_and_lists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "note.md"
+            path.write_text(
+                "---\n"
+                "type: ai-conversation\n"
+                "session_id: abc123\n"
+                'cwd: "/Users/me/path with space"\n'
+                "related_files:\n"
+                "  - src/cli.py\n"
+                '  - "/abs/path"\n'
+                "---\n"
+                "# Body\n",
+                encoding="utf-8",
+            )
+            fm = read_frontmatter(path)
+            self.assertEqual(fm["type"], "ai-conversation")
+            self.assertEqual(fm["session_id"], "abc123")
+            self.assertEqual(fm["cwd"], "/Users/me/path with space")
+            self.assertEqual(fm["related_files"], ["src/cli.py", "/abs/path"])
+
+    def test_find_related_sessions_ranks_by_overlap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            sessions.mkdir()
+            (sessions / "20260501-claude-a.md").write_text(
+                "---\nsession_id: a\nrelated_files:\n  - x.py\n  - y.py\n---\n",
+                encoding="utf-8",
+            )
+            (sessions / "20260502-codex-b.md").write_text(
+                "---\nsession_id: b\nrelated_files:\n  - y.py\n---\n",
+                encoding="utf-8",
+            )
+            (sessions / "20260503-claude-c.md").write_text(
+                "---\nsession_id: c\nrelated_files:\n  - z.py\n---\n",
+                encoding="utf-8",
+            )
+            results = find_related_sessions(sessions, "current", ["x.py", "y.py"])
+            self.assertEqual(results, [("20260501-claude-a", 2), ("20260502-codex-b", 1)])
+
+    def test_find_related_sessions_excludes_current_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sessions = Path(tmp) / "sessions"
+            sessions.mkdir()
+            (sessions / "20260501-claude-self.md").write_text(
+                "---\nsession_id: self\nrelated_files:\n  - x.py\n---\n",
+                encoding="utf-8",
+            )
+            results = find_related_sessions(sessions, "self", ["x.py"])
+            self.assertEqual(results, [])
+
+    def test_update_daily_note_creates_file_with_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            daily = Path(tmp) / "Daily" / "2026-05-09.md"
+            entry = render_daily_entry(
+                "20260509-claude-foo",
+                "sid-1",
+                "Topic line",
+                {"discussion": 3, "action": 2, "decisions": 1},
+            )
+            update_daily_note(daily, entry, "sid-1", "2026-05-09")
+            text = daily.read_text(encoding="utf-8")
+            self.assertIn("# 2026-05-09", text)
+            self.assertIn("## AI sessions", text)
+            self.assertIn("[[20260509-claude-foo]]", text)
+            self.assertIn("Topic line", text)
+            self.assertIn("3 discussion · 2 action · 1 decisions", text)
+            self.assertIn("<!-- session_id: sid-1 -->", text)
+
+    def test_update_daily_note_replaces_existing_entry_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            daily = Path(tmp) / "Daily" / "2026-05-09.md"
+            entry_v1 = render_daily_entry(
+                "20260509-claude-foo", "sid-1", "v1", {"discussion": 1, "action": 0, "decisions": 0}
+            )
+            update_daily_note(daily, entry_v1, "sid-1", "2026-05-09")
+            entry_other = render_daily_entry(
+                "20260509-codex-bar", "sid-2", "other", {"discussion": 2, "action": 1, "decisions": 0}
+            )
+            update_daily_note(daily, entry_other, "sid-2", "2026-05-09")
+            entry_v2 = render_daily_entry(
+                "20260509-claude-foo", "sid-1", "v2 updated", {"discussion": 5, "action": 3, "decisions": 2}
+            )
+            update_daily_note(daily, entry_v2, "sid-1", "2026-05-09")
+
+            text = daily.read_text(encoding="utf-8")
+            self.assertNotIn("v1", text)
+            self.assertIn("v2 updated", text)
+            self.assertIn("other", text)
+            # Both entries present, no duplicates
+            self.assertEqual(text.count("<!-- session_id: sid-1 -->"), 1)
+            self.assertEqual(text.count("<!-- session_id: sid-2 -->"), 1)
+
+    def test_export_writes_daily_note_with_session_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "p"
+            project.mkdir()
+            transcript = root / "claude.jsonl"
+            transcript.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "user",
+                        "message": {"role": "user", "content": "请帮我设计 vault 检测"},
+                        "cwd": str(project), "sessionId": "sid-x",
+                        "timestamp": "2026-05-08T01:00:00Z",
+                    }),
+                    json.dumps({
+                        "type": "assistant",
+                        "message": {"role": "assistant", "content": [
+                            {"type": "text", "text": "我建议读 obsidian.json"},
+                        ]},
+                        "cwd": str(project), "sessionId": "sid-x",
+                        "timestamp": "2026-05-08T01:01:00Z",
+                    }),
+                ]),
+                encoding="utf-8",
+            )
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            export_transcript("claude", transcript, config, cwd=str(project))
+            daily = root / "vault" / "AI Conversations" / "Daily" / "2026-05-08.md"
+            self.assertTrue(daily.exists())
+            text = daily.read_text(encoding="utf-8")
+            self.assertIn("[[20260508-claude-请帮我设计-vault-检测]]", text)
+            self.assertIn("请帮我设计 vault 检测", text)
+            self.assertIn("<!-- session_id: sid-x -->", text)
+
+    def test_export_links_to_prior_session_with_shared_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "p"
+            project.mkdir()
+            sessions_dir = root / "vault" / "AI Conversations" / "Projects" / "p" / "sessions"
+            sessions_dir.mkdir(parents=True)
+            (sessions_dir / "20260501-claude-prior.md").write_text(
+                "---\nsession_id: prior\nrelated_files:\n  - cli.py\n---\n",
+                encoding="utf-8",
+            )
+
+            transcript = root / "claude.jsonl"
+            transcript.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "user",
+                        "message": {"role": "user", "content": "改 cli.py"},
+                        "cwd": str(project), "sessionId": "new",
+                        "timestamp": "2026-05-08T01:00:00Z",
+                    }),
+                    json.dumps({
+                        "type": "assistant",
+                        "message": {"role": "assistant", "content": [
+                            {"type": "tool_use", "name": "Edit",
+                             "input": {"file_path": str(project / "cli.py"),
+                                       "old_string": "x", "new_string": "y"}},
+                        ]},
+                        "cwd": str(project), "sessionId": "new",
+                        "timestamp": "2026-05-08T01:01:00Z",
+                    }),
+                ]),
+                encoding="utf-8",
+            )
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("claude", transcript, config, cwd=str(project))
+            md = result.markdown_path.read_text(encoding="utf-8")
+            self.assertIn('related_sessions:\n  - "[[20260501-claude-prior]]"', md)
+            self.assertIn("## Related sessions\n\n- [[20260501-claude-prior]] (1 shared file)", md)
 
     def test_export_includes_related_files_and_tools_in_frontmatter(self):
         with tempfile.TemporaryDirectory() as tmp:
