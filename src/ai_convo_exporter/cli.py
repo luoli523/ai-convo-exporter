@@ -48,6 +48,17 @@ class Message:
     role: str
     text: str
     timestamp: str = ""
+    kind: str = "discussion"  # "discussion" or "action"
+
+
+@dataclass
+class ToolUsage:
+    files: list[str] = field(default_factory=list)
+    tools: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def total_calls(self) -> int:
+        return sum(self.tools.values())
 
 
 @dataclass
@@ -61,6 +72,7 @@ class Transcript:
     git_repo: str = ""
     git_branch: str = ""
     title: str = ""
+    tool_usage: ToolUsage = field(default_factory=ToolUsage)
 
 
 @dataclass
@@ -135,6 +147,22 @@ def ascii_slug(value: str, fallback: str, max_len: int = 72) -> str:
     return value or fallback
 
 
+def title_slug(value: str, fallback: str, max_len: int = 50) -> str:
+    """Filename-safe slug that preserves CJK / unicode word characters.
+
+    Lowercases ASCII letters; replaces any non-letter/digit (and underscores)
+    with `-`; strips filesystem-illegal characters; truncates by character
+    count. Falls back when the result is empty.
+    """
+    value = value.replace("\n", " ").strip().lower()
+    value = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", "", value)
+    value = re.sub(r"[^\w]|_", "-", value, flags=re.UNICODE)
+    value = re.sub(r"-+", "-", value).strip("-")
+    if len(value) > max_len:
+        value = value[:max_len].rstrip("-")
+    return value or fallback
+
+
 def parse_time(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -179,6 +207,15 @@ def is_noise(text: str) -> bool:
     return not stripped or any(stripped.startswith(prefix) for prefix in SKIP_PREFIXES)
 
 
+def content_has_tool_use(content: Any) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict) and block.get("type") == "tool_use"
+        for block in content
+    )
+
+
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -193,6 +230,94 @@ def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 yield value
 
 
+_FILE_PATH_KEYS = ("file_path", "path", "filename", "file", "notebook_path")
+
+
+def _record_file(usage: ToolUsage, value: Any) -> None:
+    if isinstance(value, str) and value and value not in usage.files:
+        usage.files.append(value)
+
+
+def extract_claude_tool_usage(path: Path) -> ToolUsage:
+    usage = ToolUsage()
+    for entry in read_jsonl(path):
+        if entry.get("type") != "assistant":
+            continue
+        message = entry.get("message")
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            if isinstance(name, str) and name:
+                usage.tools[name] = usage.tools.get(name, 0) + 1
+            inp = block.get("input")
+            if isinstance(inp, dict):
+                for key in _FILE_PATH_KEYS:
+                    _record_file(usage, inp.get(key))
+    return usage
+
+
+def extract_codex_tool_usage(path: Path) -> ToolUsage:
+    usage = ToolUsage()
+    for entry in read_jsonl(path):
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "function_call":
+            continue
+        name = payload.get("name")
+        if isinstance(name, str) and name:
+            usage.tools[name] = usage.tools.get(name, 0) + 1
+        args_raw = payload.get("arguments")
+        args: Any = None
+        if isinstance(args_raw, str):
+            try:
+                args = json.loads(args_raw)
+            except json.JSONDecodeError:
+                args = None
+        elif isinstance(args_raw, dict):
+            args = args_raw
+        if isinstance(args, dict):
+            for key in _FILE_PATH_KEYS:
+                _record_file(usage, args.get(key))
+    return usage
+
+
+def extract_tool_usage(provider: str, path: Path) -> ToolUsage:
+    p = provider.lower()
+    if p == "claude":
+        return extract_claude_tool_usage(path)
+    if p == "codex":
+        return extract_codex_tool_usage(path)
+    return ToolUsage()
+
+
+def relativize_to_cwd(paths: list[str], cwd: str) -> list[str]:
+    if not cwd:
+        return list(paths)
+    cwd_path = Path(cwd)
+    out: list[str] = []
+    for raw in paths:
+        try:
+            candidate = Path(raw)
+        except (TypeError, ValueError):
+            out.append(raw)
+            continue
+        if candidate.is_absolute():
+            try:
+                out.append(str(candidate.relative_to(cwd_path)))
+                continue
+            except ValueError:
+                pass
+        out.append(raw)
+    return out
+
+
 def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
     messages: list[Message] = []
     timestamps: list[datetime] = []
@@ -201,6 +326,7 @@ def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
     git_repo = ""
     git_branch = ""
     title = ""
+    last_assistant_idx = -1
 
     for entry in read_jsonl(path):
         timestamp = entry.get("timestamp")
@@ -223,7 +349,14 @@ def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
             continue
 
         payload = entry.get("payload", {})
-        if not isinstance(payload, dict) or payload.get("type") != "message":
+        if not isinstance(payload, dict):
+            continue
+        payload_type = payload.get("type")
+        if payload_type == "function_call":
+            if last_assistant_idx >= 0:
+                messages[last_assistant_idx].kind = "action"
+            continue
+        if payload_type != "message":
             continue
         role = payload.get("role")
         if role not in {"user", "assistant"}:
@@ -234,6 +367,10 @@ def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
         if role == "user" and not title:
             title = text
         messages.append(Message(role=role, text=text, timestamp=str(timestamp or "")))
+        if role == "assistant":
+            last_assistant_idx = len(messages) - 1
+        else:
+            last_assistant_idx = -1
 
     now = datetime.now(timezone.utc)
     created = min(timestamps) if timestamps else now
@@ -258,6 +395,7 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
     transcript_cwd = cwd
     git_branch = ""
     title = ""
+    last_assistant_idx = -1
 
     for entry in read_jsonl(path):
         timestamp = entry.get("timestamp")
@@ -280,15 +418,31 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
         message = entry.get("message", {})
         if not isinstance(message, dict):
             continue
+        content = message.get("content")
+        has_tools = content_has_tool_use(content)
+        text = extract_text(content)
+
+        # Pure tool_use entry (Claude Code splits text and tool_use across entries):
+        # the previous text-bearing assistant message is the one doing the action.
+        if entry_type == "assistant" and has_tools and not text:
+            if last_assistant_idx >= 0:
+                messages[last_assistant_idx].kind = "action"
+            continue
+
+        if is_noise(text):
+            continue
+
         role = message.get("role")
         if role not in {"user", "assistant"}:
             role = entry_type
-        text = extract_text(message.get("content"))
-        if is_noise(text):
-            continue
         if role == "user" and not title:
             title = text
-        messages.append(Message(role=role, text=text, timestamp=str(timestamp or "")))
+        kind = "action" if (role == "assistant" and has_tools) else "discussion"
+        messages.append(Message(role=role, text=text, timestamp=str(timestamp or ""), kind=kind))
+        if role == "assistant":
+            last_assistant_idx = len(messages) - 1
+        else:
+            last_assistant_idx = -1
 
     now = datetime.now(timezone.utc)
     created = min(timestamps) if timestamps else now
@@ -308,10 +462,13 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
 def parse_transcript(provider: str, path: Path, cwd: str = "") -> Transcript:
     provider = provider.lower()
     if provider == "codex":
-        return parse_codex_transcript(path, cwd)
-    if provider == "claude":
-        return parse_claude_transcript(path, cwd)
-    raise ValueError(f"Unsupported provider: {provider}")
+        transcript = parse_codex_transcript(path, cwd)
+    elif provider == "claude":
+        transcript = parse_claude_transcript(path, cwd)
+    else:
+        raise ValueError(f"Unsupported provider: {provider}")
+    transcript.tool_usage = extract_tool_usage(provider, path)
+    return transcript
 
 
 def find_git_dir(cwd: str) -> Path | None:
@@ -425,6 +582,9 @@ def render_markdown(
     first_title = transcript.title or next((m.text for m in transcript.messages if m.role == "user"), "")
     title = safe_filename(first_title or transcript.session_id, 88)
 
+    related_files = relativize_to_cwd(transcript.tool_usage.files, transcript.cwd)[:20]
+    tools_used = sorted(transcript.tool_usage.tools.keys())
+
     lines = [
         "---",
         "type: ai-conversation",
@@ -439,6 +599,17 @@ def render_markdown(
         f"git_branch: {yaml_value(git_branch)}",
         f"machine: {yaml_value(config.machine)}",
         f"raw_transcript: {yaml_value(raw_rel_path)}",
+        f"tool_call_count: {transcript.tool_usage.total_calls}",
+    ]
+    if tools_used:
+        lines.append("tools_used:")
+        for name in tools_used:
+            lines.append(f"  - {name}")
+    if related_files:
+        lines.append("related_files:")
+        for path in related_files:
+            lines.append(f"  - {yaml_value(path)}")
+    lines.extend([
         "tags:",
         "  - ai/conversation",
         f"  - provider/{transcript.provider}",
@@ -453,15 +624,29 @@ def render_markdown(
         "",
         "---",
         "",
-    ]
+    ])
 
     for message in transcript.messages:
-        label = "User" if message.role == "user" else "Assistant"
-        lines.extend([f"## {label}", ""])
+        lines.extend(render_message(message))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_message(message: Message) -> list[str]:
+    label = "User" if message.role == "user" else "Assistant"
+    if message.kind == "action" and message.role == "assistant":
+        lines = [f"## {label}", ""]
         if message.timestamp:
             lines.extend([f"> {message.timestamp}", ""])
-        lines.extend([message.text, "", "---", ""])
-    return "\n".join(lines).rstrip() + "\n"
+        lines.append("> [!action]- action")
+        for content_line in message.text.split("\n"):
+            lines.append(f"> {content_line}" if content_line else ">")
+        lines.extend(["", "---", ""])
+        return lines
+    lines = [f"## {label}", ""]
+    if message.timestamp:
+        lines.extend([f"> {message.timestamp}", ""])
+    lines.extend([message.text, "", "---", ""])
+    return lines
 
 
 def write_project_index(project_dir: Path, project: str, project_slug: str, conversations_dir: str) -> None:
@@ -513,7 +698,7 @@ def export_transcript(provider: str, transcript_path: Path, config: ExportConfig
         shutil.copy2(transcript_path, raw_path)
 
     local_updated = to_local(transcript.updated, config.timezone)
-    title = ascii_slug(
+    title = title_slug(
         transcript.title or transcript.session_id,
         transcript.session_id[:8] or "session",
     )
