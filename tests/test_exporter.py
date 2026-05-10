@@ -23,7 +23,7 @@ from ai_convo_exporter.cli import (
 
 
 class ExporterTests(unittest.TestCase):
-    def test_manual_hook_policy_requires_save_chat_trigger(self):
+    def test_hook_policy_exports_full_transcript_without_save_trigger(self):
         transcript = Transcript(
             provider="codex",
             session_id="session-1",
@@ -36,18 +36,15 @@ class ExporterTests(unittest.TestCase):
         )
         config = ExportConfig(vault_dir=Path("/tmp/vault"))
 
-        self.assertFalse(should_export_from_hook(transcript, config))
-
-        transcript.messages.append(Message(role="user", text="#save-chat"))
-
         self.assertTrue(should_export_from_hook(transcript, config))
+        self.assertIs(transcript_for_hook_export(transcript, config), transcript)
 
-    def test_hook_skip_trigger_overrides_manual_save_trigger(self):
+    def test_hook_skip_trigger_overrides_automatic_save(self):
         transcript = Transcript(
             provider="codex",
             session_id="session-1",
             messages=[
-                Message(role="user", text="#save-chat"),
+                Message(role="user", text="Private debugging notes"),
                 Message(role="user", text="#nosave"),
             ],
             created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
@@ -57,32 +54,25 @@ class ExporterTests(unittest.TestCase):
 
         self.assertFalse(should_export_from_hook(transcript, config))
 
-    def test_manual_hook_policy_exports_latest_assistant_before_save_trigger(self):
+    def test_hook_policy_treats_legacy_manual_config_as_automatic_save(self):
         transcript = Transcript(
             provider="codex",
             session_id="session-1",
             messages=[
                 Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
                 Message(role="assistant", text="Important answer", timestamp="2026-05-08T01:01:00.000Z"),
-                Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
-                Message(role="assistant", text="Save acknowledged", timestamp="2026-05-08T01:03:00.000Z"),
             ],
             created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
-            updated=datetime.fromisoformat("2026-05-08T01:03:00+00:00"),
+            updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
             title="Explain the change",
         )
-        config = ExportConfig(vault_dir=Path("/tmp/vault"))
+        config = ExportConfig(vault_dir=Path("/tmp/vault"), save_policy="manual")
 
         selected = transcript_for_hook_export(transcript, config)
 
-        self.assertIsNotNone(selected)
-        assert selected is not None
-        self.assertEqual([message.text for message in selected.messages], ["Explain the change", "Important answer"])
-        self.assertEqual(selected.created, datetime.fromisoformat("2026-05-08T01:00:00+00:00"))
-        self.assertEqual(selected.updated, datetime.fromisoformat("2026-05-08T01:01:00+00:00"))
-        self.assertTrue(selected.append_same_session)
+        self.assertIs(selected, transcript)
 
-    def test_manual_hook_export_writes_selected_question_answer_pair(self):
+    def test_hook_export_writes_full_transcript_without_save_marker(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "plain-project"
@@ -95,8 +85,8 @@ class ExporterTests(unittest.TestCase):
                 messages=[
                     Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
                     Message(role="assistant", text="Important answer", timestamp="2026-05-08T01:01:00.000Z"),
-                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
-                    Message(role="assistant", text="Save acknowledged", timestamp="2026-05-08T01:03:00.000Z"),
+                    Message(role="user", text="One more detail", timestamp="2026-05-08T01:02:00.000Z"),
+                    Message(role="assistant", text="Second answer", timestamp="2026-05-08T01:03:00.000Z"),
                 ],
                 created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
                 updated=datetime.fromisoformat("2026-05-08T01:03:00+00:00"),
@@ -111,14 +101,12 @@ class ExporterTests(unittest.TestCase):
             markdown = result.markdown_path.read_text(encoding="utf-8")
 
             self.assertIn("## Explain the change", markdown)
+            self.assertIn("## One more detail", markdown)
             self.assertIn("### Answer", markdown)
             self.assertIn("Important answer", markdown)
-            self.assertNotIn("## User", markdown)
-            self.assertNotIn("## Assistant", markdown)
-            self.assertNotIn("#save-chat", markdown)
-            self.assertNotIn("Save acknowledged", markdown)
+            self.assertIn("Second answer", markdown)
 
-    def test_manual_hook_export_appends_to_one_file_per_session_and_renames_by_date(self):
+    def test_hook_export_replaces_one_file_per_session_and_renames_by_date(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "plain-project"
@@ -133,10 +121,9 @@ class ExporterTests(unittest.TestCase):
                 messages=[
                     Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
                     Message(role="assistant", text="First saved answer", timestamp="2026-05-08T01:01:00.000Z"),
-                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
                 ],
                 created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
-                updated=datetime.fromisoformat("2026-05-08T01:02:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
                 cwd=str(project),
                 title="Explain the change",
             )
@@ -150,12 +137,11 @@ class ExporterTests(unittest.TestCase):
                 messages=[
                     Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
                     Message(role="assistant", text="First saved answer", timestamp="2026-05-08T01:01:00.000Z"),
-                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
+                    Message(role="user", text="Follow-up", timestamp="2026-05-09T01:00:00.000Z"),
                     Message(role="assistant", text="Second saved answer", timestamp="2026-05-09T01:01:00.000Z"),
-                    Message(role="user", text="#save-chat", timestamp="2026-05-09T01:02:00.000Z"),
                 ],
                 created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
-                updated=datetime.fromisoformat("2026-05-09T01:02:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-09T01:01:00+00:00"),
                 cwd=str(project),
                 title="Explain the change",
             )
@@ -173,9 +159,8 @@ class ExporterTests(unittest.TestCase):
             markdown = second_result.markdown_path.read_text(encoding="utf-8")
             self.assertIn("First saved answer", markdown)
             self.assertIn("Second saved answer", markdown)
-            self.assertNotIn("#save-chat", markdown)
 
-    def test_manual_hook_export_does_not_append_same_reply_twice(self):
+    def test_hook_export_rewrites_same_full_transcript_without_duplicates(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "plain-project"
@@ -189,10 +174,9 @@ class ExporterTests(unittest.TestCase):
                 messages=[
                     Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
                     Message(role="assistant", text="Only save once", timestamp="2026-05-08T01:01:00.000Z"),
-                    Message(role="user", text="#save-chat", timestamp="2026-05-08T01:02:00.000Z"),
                 ],
                 created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
-                updated=datetime.fromisoformat("2026-05-08T01:02:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
                 cwd=str(project),
                 title="Explain the change",
             )
@@ -457,14 +441,14 @@ class ExporterTests(unittest.TestCase):
             with patch.dict("os.environ", {"AI_CONVO_VAULT": ""}):
                 self.assertEqual(default_vault_dir(home), home / "Documents" / "obsidian")
 
-    def test_default_config_uses_manual_save_policy(self):
+    def test_default_config_uses_automatic_save_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             with patch.dict("os.environ", {"AI_CONVO_CONFIG": "", "AI_CONVO_VAULT": ""}):
                 config = load_config(home)
 
-        self.assertEqual(config.save_policy, "manual")
-        self.assertEqual(config.save_triggers, ["#save-chat"])
+        self.assertEqual(config.save_policy, "always")
+        self.assertEqual(config.save_triggers, [])
         self.assertEqual(config.skip_triggers, ["#nosave"])
 
     def test_merges_hooks_without_dropping_existing_config(self):

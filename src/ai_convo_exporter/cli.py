@@ -20,8 +20,8 @@ from zoneinfo import ZoneInfo
 
 DEFAULT_CONVERSATIONS_DIR = "AI Conversations"
 DEFAULT_TIMEZONE = "Asia/Singapore"
-DEFAULT_SAVE_POLICY = "manual"
-DEFAULT_SAVE_TRIGGERS = ["#save-chat"]
+DEFAULT_SAVE_POLICY = "always"
+DEFAULT_SAVE_TRIGGERS: list[str] = []
 DEFAULT_SKIP_TRIGGERS = ["#nosave"]
 HOOK_STATUS = {"continue": True, "suppressOutput": True}
 
@@ -108,6 +108,13 @@ def config_string_list(value: Any, default: list[str]) -> list[str]:
     return list(default)
 
 
+def normalize_save_policy(value: Any) -> str:
+    policy = str(value or DEFAULT_SAVE_POLICY).strip().lower()
+    if policy == "manual":
+        return "always"
+    return policy or DEFAULT_SAVE_POLICY
+
+
 def load_config(home: Path | None = None) -> ExportConfig:
     path = config_path(home)
     data: dict[str, Any] = {}
@@ -120,7 +127,7 @@ def load_config(home: Path | None = None) -> ExportConfig:
         timezone=data.get("timezone", DEFAULT_TIMEZONE),
         machine=data.get("machine", socket.gethostname()),
         archive_raw=bool(data.get("archive_raw", True)),
-        save_policy=str(data.get("save_policy", DEFAULT_SAVE_POLICY)).lower(),
+        save_policy=normalize_save_policy(data.get("save_policy", DEFAULT_SAVE_POLICY)),
         save_triggers=config_string_list(data.get("save_triggers"), DEFAULT_SAVE_TRIGGERS),
         skip_triggers=config_string_list(data.get("skip_triggers"), DEFAULT_SKIP_TRIGGERS),
     )
@@ -224,65 +231,11 @@ def should_export_from_hook(transcript: Transcript, config: ExportConfig) -> boo
     return transcript_for_hook_export(transcript, config) is not None
 
 
-def message_time(message: Message, fallback: datetime) -> datetime:
-    return parse_time(message.timestamp) or fallback
-
-
-def latest_user_trigger_index(transcript: Transcript, triggers: list[str]) -> int | None:
-    for index in range(len(transcript.messages) - 1, -1, -1):
-        message = transcript.messages[index]
-        if message.role == "user" and trigger_in_text(message.text, triggers):
-            return index
-    return None
-
-
 def transcript_for_hook_export(transcript: Transcript, config: ExportConfig) -> Transcript | None:
     if user_has_trigger(transcript, config.skip_triggers):
         return None
-    if config.save_policy == "always":
+    if config.save_policy in {"always", "manual"}:
         return transcript
-    if config.save_policy != "manual":
-        return None
-
-    trigger_index = latest_user_trigger_index(transcript, config.save_triggers)
-    if trigger_index is None:
-        return None
-
-    messages_before_trigger = transcript.messages[:trigger_index]
-    for assistant_index in range(len(messages_before_trigger) - 1, -1, -1):
-        assistant = messages_before_trigger[assistant_index]
-        if assistant.role != "assistant":
-            continue
-        question = latest_user_question_before(messages_before_trigger, assistant_index, config)
-        messages = [question, assistant] if question else [assistant]
-        created = message_time(question, transcript.created) if question else message_time(assistant, transcript.created)
-        updated = message_time(assistant, transcript.updated)
-        return Transcript(
-            provider=transcript.provider,
-            session_id=transcript.session_id,
-            messages=messages,
-            created=created,
-            updated=updated,
-            cwd=transcript.cwd,
-            git_repo=transcript.git_repo,
-            git_branch=transcript.git_branch,
-            title=transcript.title,
-            append_same_session=True,
-        )
-    return None
-
-
-def latest_user_question_before(
-    messages: list[Message],
-    before_index: int,
-    config: ExportConfig,
-) -> Message | None:
-    for message in reversed(messages[:before_index]):
-        if message.role != "user":
-            continue
-        if trigger_in_text(message.text, config.save_triggers + config.skip_triggers):
-            continue
-        return message
     return None
 
 
@@ -796,7 +749,7 @@ def merge_claude_settings(settings: dict[str, Any], command: str) -> dict[str, A
         "type": "command",
         "command": command,
         "timeout": 30,
-        "statusMessage": "Exporting conversation to Obsidian if requested...",
+        "statusMessage": "Exporting conversation to Obsidian...",
     }
 
     for group in stop_groups:
@@ -825,7 +778,7 @@ def merge_codex_hooks(hooks_config: dict[str, Any], command: str) -> dict[str, A
         "type": "command",
         "command": command,
         "timeout": 30,
-        "statusMessage": "Exporting conversation to Obsidian if requested...",
+        "statusMessage": "Exporting conversation to Obsidian...",
     }
 
     for group in stop_groups:

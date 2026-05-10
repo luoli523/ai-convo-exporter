@@ -18,7 +18,7 @@ The exporter keeps two copies of each conversation:
       ads_attribution/
         _index.md
         sessions/
-          20260508-codex-save-chat.md
+          20260508-codex-fix-exporter-bug.md
         raw/
           codex/
             019e0544-7beb-7983-a458-de94206793f8.jsonl
@@ -65,7 +65,7 @@ The installer:
 
 Repeat installs are idempotent. The installer updates the same hook entries instead of appending duplicates.
 
-By default, hooks use manual save mode. When a user message contains `#save-chat` on its own line, the hook exports the latest question-and-answer pair before that save marker. Each saved pair is rendered with the question as the `##` heading and the assistant reply under `### Answer`, so folded notes still show the question. Repeated saves append to the same session note; if the latest saved reply changes the `YYYYMMDD` date, the note is renamed instead of duplicated. Add `#nosave` to skip saving even when a save trigger is present. Manual `export`, `scan`, and `backfill` commands still export full transcripts directly.
+By default, hooks automatically export the full conversation transcript at the end of each Codex or Claude Code turn. No manual save marker is required. Repeated hook runs rewrite the same session note with the latest full transcript; if the session's `YYYYMMDD` date changes, the note is renamed instead of duplicated. Add `#nosave` on its own line to skip saving a conversation. Manual `export`, `scan`, and `backfill` commands also export full transcripts directly.
 
 ## Commands
 
@@ -101,8 +101,8 @@ Default config:
   "timezone": "Asia/Singapore",
   "machine": "hostname",
   "archive_raw": true,
-  "save_policy": "manual",
-  "save_triggers": ["#save-chat"],
+  "save_policy": "always",
+  "save_triggers": [],
   "skip_triggers": ["#nosave"]
 }
 ```
