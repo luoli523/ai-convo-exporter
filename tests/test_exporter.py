@@ -9,7 +9,6 @@ from ai_convo_exporter.cli import (
     ExportConfig,
     Message,
     Transcript,
-    ascii_slug,
     default_vault_dir,
     export_parsed_transcript,
     export_transcript,
@@ -18,6 +17,7 @@ from ai_convo_exporter.cli import (
     merge_codex_config_toml,
     merge_codex_hooks,
     should_export_from_hook,
+    title_slug,
     transcript_for_hook_export,
 )
 
@@ -270,7 +270,7 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(result.project_slug, "ads_attribution")
             self.assertTrue(result.markdown_path.exists())
             self.assertTrue(result.raw_path.exists())
-            self.assertEqual(result.markdown_path.name, "20260508-codex-019e0544.md")
+            self.assertEqual(result.markdown_path.name, "20260508-codex-保存对话.md")
 
             markdown = result.markdown_path.read_text(encoding="utf-8")
             self.assertIn("provider: codex", markdown)
@@ -335,7 +335,7 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("继续", markdown)
             self.assertNotIn("hidden", markdown)
 
-    def test_session_filename_uses_ascii_slug_from_title(self):
+    def test_session_filename_uses_unicode_slug_from_title(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = root / "plain-project"
@@ -376,6 +376,174 @@ class ExporterTests(unittest.TestCase):
             result = export_transcript("codex", transcript, config, cwd=str(project))
 
             self.assertEqual(result.markdown_path.name, "20260508-codex-fix-exporter-bug.md")
+
+    def test_session_filename_preserves_chinese_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:47:14.000Z",
+                                "type": "session_meta",
+                                "payload": {
+                                    "id": "019e0544-7beb-7983-a458-de94206793f8",
+                                    "timestamp": "2026-05-08T01:47:14.000Z",
+                                    "cwd": str(project),
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:48:30.000Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "user",
+                                    "content": [{"type": "input_text", "text": "修复 Codex 命名"}],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("codex", transcript, config, cwd=str(project))
+
+            self.assertEqual(result.markdown_path.name, "20260508-codex-修复-codex-命名.md")
+
+    def test_codex_renamed_session_uses_thread_name_for_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            codex_dir = root / ".codex"
+            sessions_dir = codex_dir / "sessions" / "2026" / "05" / "08"
+            sessions_dir.mkdir(parents=True)
+            project = root / "plain-project"
+            project.mkdir()
+            session_id = "019e0544-7beb-7983-a458-de94206793f8"
+            (codex_dir / "session_index.jsonl").write_text(
+                json.dumps(
+                    {
+                        "id": session_id,
+                        "thread_name": "session命名修改",
+                        "updated_at": "2026-05-08T01:50:00.000Z",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            transcript = sessions_dir / "rollout-2026-05-08T01-47-14-019e0544.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:47:14.000Z",
+                                "type": "session_meta",
+                                "payload": {
+                                    "id": session_id,
+                                    "timestamp": "2026-05-08T01:47:14.000Z",
+                                    "cwd": str(project),
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp": "2026-05-08T01:48:30.000Z",
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "message",
+                                    "role": "user",
+                                    "content": [{"type": "input_text", "text": "First user prompt"}],
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("codex", transcript, config, cwd=str(project))
+            markdown = result.markdown_path.read_text(encoding="utf-8")
+
+            self.assertEqual(result.markdown_path.name, "20260508-codex-session命名修改.md")
+            self.assertIn("# session命名修改", markdown)
+
+    def test_claude_renamed_session_uses_custom_title_for_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript = root / "claude.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "custom-title",
+                                "sessionId": "session-1",
+                                "customTitle": "旧名字",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "type": "user",
+                                "message": {"role": "user", "content": "First user prompt"},
+                                "cwd": str(project),
+                                "sessionId": "session-1",
+                                "timestamp": "2026-05-08T02:01:00.000Z",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "ai-title",
+                                "sessionId": "session-1",
+                                "aiTitle": "Auto generated title",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "custom-title",
+                                "sessionId": "session-1",
+                                "customTitle": "Claude 命名修改",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": "Done"}],
+                                },
+                                "cwd": str(project),
+                                "sessionId": "session-1",
+                                "timestamp": "2026-05-08T02:02:00.000Z",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            result = export_transcript("claude", transcript, config, cwd=str(project))
+            markdown = result.markdown_path.read_text(encoding="utf-8")
+
+            self.assertEqual(result.markdown_path.name, "20260508-claude-claude-命名修改.md")
+            self.assertIn("# Claude 命名修改", markdown)
 
     def test_session_filename_uses_updated_date_and_removes_stale_note(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -431,9 +599,10 @@ class ExporterTests(unittest.TestCase):
             self.assertTrue(result.markdown_path.exists())
             self.assertFalse(stale_note.exists())
 
-    def test_ascii_session_slug_drops_non_ascii_and_falls_back(self):
-        self.assertEqual(ascii_slug("修复 codex hook", "session"), "codex-hook")
-        self.assertEqual(ascii_slug("保存对话", "019e0544"), "019e0544")
+    def test_title_slug_preserves_chinese_and_falls_back_when_empty(self):
+        self.assertEqual(title_slug("修复 codex hook", "session"), "修复-codex-hook")
+        self.assertEqual(title_slug("保存对话", "019e0544"), "保存对话")
+        self.assertEqual(title_slug("???", "019e0544"), "019e0544")
 
     def test_default_vault_dir_uses_documents_obsidian(self):
         with tempfile.TemporaryDirectory() as tmp:

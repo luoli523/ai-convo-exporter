@@ -157,12 +157,18 @@ def safe_filename(value: str, max_len: int = 72, fallback: str = "untitled") -> 
     return (value[:max_len].strip() or fallback)
 
 
-def ascii_slug(value: str, fallback: str, max_len: int = 72) -> str:
+def title_slug(value: str, fallback: str, max_len: int = 72) -> str:
     value = value.strip().lower()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
+    value = re.sub(r"[<>:\"/\\|?*\x00-\x1f]", " ", value)
+    value = re.sub(r"[_\s]+", "-", value)
+    value = re.sub(r"[^\w-]+", "-", value)
     value = re.sub(r"-+", "-", value).strip("-")
     value = value[:max_len].strip("-")
     return value or fallback
+
+
+def ascii_slug(value: str, fallback: str, max_len: int = 72) -> str:
+    return title_slug(value, fallback, max_len)
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -253,6 +259,37 @@ def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 yield value
 
 
+def codex_session_index_candidates(transcript_path: Path) -> list[Path]:
+    transcript_path = transcript_path.expanduser()
+    for parent in transcript_path.parents:
+        if parent.name == ".codex":
+            return [parent / "session_index.jsonl"]
+    return [Path.home() / ".codex" / "session_index.jsonl"]
+
+
+def read_codex_thread_name(transcript_path: Path, session_id: str) -> str:
+    for index_path in codex_session_index_candidates(transcript_path):
+        if not index_path.exists():
+            continue
+        thread_name = ""
+        for entry in read_jsonl(index_path):
+            if str(entry.get("id") or entry.get("session_id") or "") != session_id:
+                continue
+            candidate = str(
+                entry.get("thread_name")
+                or entry.get("session_name")
+                or entry.get("conversation_title")
+                or entry.get("title")
+                or entry.get("name")
+                or ""
+            ).strip()
+            if candidate:
+                thread_name = candidate
+        if thread_name:
+            return thread_name
+    return ""
+
+
 def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
     messages: list[Message] = []
     timestamps: list[datetime] = []
@@ -298,6 +335,7 @@ def parse_codex_transcript(path: Path, cwd: str = "") -> Transcript:
     now = datetime.now(timezone.utc)
     created = min(timestamps) if timestamps else now
     updated = max(timestamps) if timestamps else created
+    title = read_codex_thread_name(path, session_id) or title
     return Transcript(
         provider="codex",
         session_id=session_id,
@@ -318,6 +356,7 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
     transcript_cwd = cwd
     git_branch = ""
     title = ""
+    custom_title = ""
 
     for entry in read_jsonl(path):
         timestamp = entry.get("timestamp")
@@ -332,6 +371,11 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
         if entry.get("gitBranch"):
             git_branch = str(entry.get("gitBranch"))
 
+        if entry.get("type") == "custom-title":
+            candidate = str(entry.get("customTitle") or "").strip()
+            if candidate:
+                custom_title = candidate
+            continue
         if entry.get("isMeta"):
             continue
         entry_type = entry.get("type")
@@ -361,7 +405,7 @@ def parse_claude_transcript(path: Path, cwd: str = "") -> Transcript:
         updated=updated,
         cwd=transcript_cwd,
         git_branch=git_branch,
-        title=title,
+        title=custom_title or title,
     )
 
 
@@ -676,7 +720,7 @@ def export_parsed_transcript(
         shutil.copy2(transcript_path, raw_path)
 
     local_updated = to_local(transcript.updated, config.timezone)
-    title = ascii_slug(
+    title = title_slug(
         transcript.title or transcript.session_id,
         transcript.session_id[:8] or "session",
     )

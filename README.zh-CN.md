@@ -26,7 +26,7 @@
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-项目文件夹直接使用短项目名。只要当前 checkout 有 git remote，导出器会取仓库名，例如从 `luoli523/ads_attribution` 得到 `ads_attribution`。如果没有 git remote，则退回使用当前目录名。Session 笔记文件名使用 `YYYYMMDD-[codex|claude]-[ascii-session-name].md`，其中 `YYYYMMDD` 是 session 最后更新时间。非 ASCII 标题文本会被丢弃，如果清理后为空则退回使用 session id 前缀。
+项目文件夹直接使用短项目名。只要当前 checkout 有 git remote，导出器会取仓库名，例如从 `luoli523/ads_attribution` 得到 `ads_attribution`。如果没有 git remote，则退回使用当前目录名。Session 笔记文件名使用 `YYYYMMDD-[codex|claude]-[session-title].md`，其中 `YYYYMMDD` 是 session 最后更新时间。标题 slug 会保留中文和其他 Unicode 字母。对于已经重命名过的 session，导出器会优先使用 Codex 的 `~/.codex/session_index.jsonl` 里的 `thread_name`，或 Claude Code transcript 里的 `customTitle` 事件；否则退回使用第一条用户消息，再退回使用 session id 前缀。
 
 ## 安装
 

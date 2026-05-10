@@ -26,7 +26,7 @@ The exporter keeps two copies of each conversation:
             fd7d3855-0b5d-482d-a008-0827ab6cd875.jsonl
 ```
 
-Project folders use the short project name. When a checkout has a git remote, the exporter uses the repository name, for example `ads_attribution` from `luoli523/ads_attribution`. If no git remote is found, it falls back to the directory name. Session note filenames use `YYYYMMDD-[codex|claude]-[ascii-session-name].md`, where `YYYYMMDD` is the session's last updated date. Non-ASCII title text is dropped, with the session id prefix as a fallback.
+Project folders use the short project name. When a checkout has a git remote, the exporter uses the repository name, for example `ads_attribution` from `luoli523/ads_attribution`. If no git remote is found, it falls back to the directory name. Session note filenames use `YYYYMMDD-[codex|claude]-[session-title].md`, where `YYYYMMDD` is the session's last updated date. Title slugs preserve Chinese and other Unicode letters. For renamed sessions, the exporter uses Codex's `thread_name` from `~/.codex/session_index.jsonl` or Claude Code's `customTitle` transcript event; otherwise it falls back to the first user message, then the session id prefix.
 
 ## Install
 
