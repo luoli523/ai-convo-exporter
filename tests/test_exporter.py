@@ -1,7 +1,9 @@
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +11,7 @@ from ai_convo_exporter.cli import (
     ExportConfig,
     Message,
     Transcript,
+    build_parser,
     default_vault_dir,
     export_parsed_transcript,
     export_transcript,
@@ -619,6 +622,75 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(config.save_policy, "always")
         self.assertEqual(config.save_triggers, [])
         self.assertEqual(config.skip_triggers, ["#nosave"])
+
+    def test_install_config_prints_hook_and_config_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            parser = build_parser()
+            args = parser.parse_args(
+                [
+                    "install-config",
+                    "--home",
+                    str(home),
+                    "--vault",
+                    str(home / "Documents" / "obsidian"),
+                    "--command",
+                    "$HOME/.local/bin/ai-convo-exporter hook",
+                ]
+            )
+            output = StringIO()
+
+            with redirect_stdout(output):
+                result = args.func(args)
+
+            text = output.getvalue()
+
+        self.assertEqual(result, 0)
+        self.assertIn(f"Config: {home / '.config' / 'ai-convo-exporter' / 'config.json'}", text)
+        self.assertIn(f"Claude Code Stop hook: configured", text)
+        self.assertIn(f"Claude settings: {home / '.claude' / 'settings.json'}", text)
+        self.assertIn(f"Codex Stop hook: configured", text)
+        self.assertIn(f"Codex hooks: {home / '.codex' / 'hooks.json'}", text)
+        self.assertIn(f"Codex config: {home / '.codex' / 'config.toml'}", text)
+        self.assertIn(f"Codex writable root: {home / 'Documents' / 'obsidian'}", text)
+
+    def test_install_config_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            parser = build_parser()
+            argv = [
+                "install-config",
+                "--home",
+                str(home),
+                "--vault",
+                str(home / "Documents" / "obsidian"),
+                "--command",
+                "$HOME/.local/bin/ai-convo-exporter hook",
+            ]
+
+            first_args = parser.parse_args(argv)
+            second_args = parser.parse_args(argv)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(first_args.func(first_args), 0)
+            with redirect_stdout(StringIO()):
+                self.assertEqual(second_args.func(second_args), 0)
+
+            claude_settings = json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8"))
+            codex_hooks = json.loads((home / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+            codex_config = (home / ".codex" / "config.toml").read_text(encoding="utf-8")
+
+        self.assertEqual(len(claude_settings["hooks"]["Stop"]), 1)
+        self.assertEqual(
+            claude_settings["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "$HOME/.local/bin/ai-convo-exporter hook --provider claude",
+        )
+        self.assertEqual(len(codex_hooks["hooks"]["Stop"]), 1)
+        self.assertEqual(
+            codex_hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "$HOME/.local/bin/ai-convo-exporter hook --provider codex",
+        )
+        self.assertEqual(codex_config.count("hooks = true"), 1)
+        self.assertEqual(codex_config.count(str(home / "Documents" / "obsidian")), 1)
 
     def test_merges_hooks_without_dropping_existing_config(self):
         command = "$HOME/.local/bin/ai-convo-exporter hook --provider claude"

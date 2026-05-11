@@ -944,12 +944,15 @@ def install_config(args: argparse.Namespace) -> int:
     if args.dry_run:
         print(f"Would write config: {config_path(home)}")
         print(f"Would set vault: {config.vault_dir}")
-        print(f"Would install Claude hook command: {command} --provider claude")
-        print(f"Would install Codex hook command: {command} --provider codex")
+        print(f"Would configure Claude Code Stop hook: {home / '.claude' / 'settings.json'}")
+        print(f"Would configure Codex Stop hook: {home / '.codex' / 'hooks.json'}")
+        print(f"Would enable Codex hooks in: {home / '.codex' / 'config.toml'}")
         print(f"Would add Codex writable root: {config.vault_dir}")
+        print(f"Claude hook command: {command} --provider claude")
+        print(f"Codex hook command: {command} --provider codex")
         return 0
 
-    save_config(config, home)
+    config_file_path = save_config(config, home)
 
     claude_dir = home / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -978,8 +981,16 @@ def install_config(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
 
-    print(f"Installed ai-convo-exporter config at {config_path(home)}")
+    print("Installed ai-convo-exporter configuration.")
+    print(f"Config: {config_file_path}")
     print(f"Vault: {config.vault_dir}")
+    print(f"Claude Code Stop hook: configured")
+    print(f"Claude settings: {claude_settings_path}")
+    print(f"Codex Stop hook: configured")
+    print(f"Codex hooks: {codex_hooks_path}")
+    print(f"Codex hooks feature: enabled")
+    print(f"Codex config: {codex_config_path}")
+    print(f"Codex writable root: {config.vault_dir}")
     return 0
 
 

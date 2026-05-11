@@ -112,6 +112,10 @@ Installed ai-convo-exporter.
 
 Command: $bin_path
 Vault: $vault_dir
+Config: $home_dir/.config/ai-convo-exporter/config.json
+Claude settings: $home_dir/.claude/settings.json
+Codex hooks: $home_dir/.codex/hooks.json
+Codex config: $home_dir/.codex/config.toml
 
 Make sure $bin_dir is in PATH if you want to run ai-convo-exporter directly.
 EOF
