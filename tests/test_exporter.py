@@ -109,6 +109,39 @@ class ExporterTests(unittest.TestCase):
             self.assertIn("Important answer", markdown)
             self.assertIn("Second answer", markdown)
 
+    def test_project_index_timeout_does_not_fail_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "plain-project"
+            project.mkdir()
+            transcript_path = root / "codex.jsonl"
+            transcript_path.write_text("{}\n", encoding="utf-8")
+            transcript = Transcript(
+                provider="codex",
+                session_id="session-1",
+                messages=[
+                    Message(role="user", text="Explain the change", timestamp="2026-05-08T01:00:00.000Z"),
+                    Message(role="assistant", text="Important answer", timestamp="2026-05-08T01:01:00.000Z"),
+                ],
+                created=datetime.fromisoformat("2026-05-08T01:00:00+00:00"),
+                updated=datetime.fromisoformat("2026-05-08T01:01:00+00:00"),
+                cwd=str(project),
+                title="Explain the change",
+            )
+            config = ExportConfig(vault_dir=root / "vault", timezone="Asia/Singapore")
+            original_write_text = Path.write_text
+
+            def flaky_index_write(path: Path, text: str, *args: object, **kwargs: object) -> int:
+                if path.name == "_index.md":
+                    raise TimeoutError(60, "Operation timed out", str(path))
+                return original_write_text(path, text, *args, **kwargs)
+
+            with patch.object(Path, "write_text", flaky_index_write):
+                result = export_parsed_transcript(transcript, transcript_path, config)
+
+            self.assertTrue(result.markdown_path.exists())
+            self.assertIn("Important answer", result.markdown_path.read_text(encoding="utf-8"))
+
     def test_hook_export_replaces_one_file_per_session_and_renames_by_date(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -626,7 +626,7 @@ def render_message_sections(messages: list[Message]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_project_index(project_dir: Path, project: str, project_slug: str, conversations_dir: str) -> None:
+def write_project_index(project_dir: Path, project: str, project_slug: str, conversations_dir: str) -> bool:
     index_path = project_dir / "_index.md"
     dataview_path = f"{conversations_dir}/Projects/{project_slug}/sessions"
     index = (
@@ -638,7 +638,11 @@ def write_project_index(project_dir: Path, project: str, project_slug: str, conv
         "SORT created DESC\n"
         "```\n"
     )
-    index_path.write_text(index, encoding="utf-8")
+    try:
+        index_path.write_text(index, encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 def session_note_has_id(path: Path, session_id: str) -> bool:
