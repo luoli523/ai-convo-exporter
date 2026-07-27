@@ -10,7 +10,7 @@ Options:
   --home PATH           Home directory to configure. Useful for tests.
   --timezone NAME       IANA timezone for note timestamps. Default: Asia/Singapore.
   --conversations-dir NAME
-                        Folder under the vault. Default: AI Conversations.
+                        Folder under the vault. Default: AI-Conversations.
   --backfill            Export existing local Codex and Claude Code transcripts after installing.
   --dry-run             Print what would change without writing files.
   -h, --help            Show this help.
@@ -21,7 +21,7 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 home_dir="${HOME}"
 vault_dir="${AI_CONVO_VAULT:-}"
 timezone_name="${AI_CONVO_TIMEZONE:-Asia/Singapore}"
-conversations_dir="AI Conversations"
+conversations_dir="AI-Conversations"
 dry_run=0
 backfill=0
 

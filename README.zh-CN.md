@@ -13,7 +13,7 @@
 
 ```text
 ~/Documents/obsidian/
-  AI Conversations/
+  AI-Conversations/
     Projects/
       ads_attribution/
         _index.md
@@ -97,7 +97,7 @@ ai-convo-exporter doctor
 ```json
 {
   "vault_dir": "~/Documents/obsidian",
-  "conversations_dir": "AI Conversations",
+  "conversations_dir": "AI-Conversations",
   "timezone": "Asia/Singapore",
   "machine": "hostname",
   "archive_raw": true,

@@ -618,7 +618,7 @@ class ExporterTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            sessions_dir = root / "vault" / "AI Conversations" / "Projects" / "plain-project" / "sessions"
+            sessions_dir = root / "vault" / "AI-Conversations" / "Projects" / "plain-project" / "sessions"
             sessions_dir.mkdir(parents=True)
             stale_note = sessions_dir / "20260508-codex-fix-exporter-bug.md"
             stale_note.write_text(
@@ -652,6 +652,7 @@ class ExporterTests(unittest.TestCase):
             with patch.dict("os.environ", {"AI_CONVO_CONFIG": "", "AI_CONVO_VAULT": ""}):
                 config = load_config(home)
 
+        self.assertEqual(config.conversations_dir, "AI-Conversations")
         self.assertEqual(config.save_policy, "always")
         self.assertEqual(config.save_triggers, [])
         self.assertEqual(config.skip_triggers, ["#nosave"])

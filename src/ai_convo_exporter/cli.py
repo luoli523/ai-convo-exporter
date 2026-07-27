@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 
-DEFAULT_CONVERSATIONS_DIR = "AI Conversations"
+DEFAULT_CONVERSATIONS_DIR = "AI-Conversations"
 DEFAULT_TIMEZONE = "Asia/Singapore"
 DEFAULT_SAVE_POLICY = "always"
 DEFAULT_SAVE_TRIGGERS: list[str] = []
